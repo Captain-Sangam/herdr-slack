@@ -1,0 +1,23 @@
+# Slack app for the Herdr Slack panel: read-only user token, no bot user.
+# api.slack.com/apps -> Create New App -> From a manifest.
+display_information:
+  name: Herdr Slack helper
+  description: Read-only DMs and mentions for a personal Herdr.app panel.
+oauth_config:
+  scopes:
+    user:
+      - search:read
+      - users:read
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      - files:read
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
