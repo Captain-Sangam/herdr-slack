@@ -70,6 +70,13 @@ The screens show invented people, channels and numbers. They come from the real 
 
 Run `./install.sh` again after each Herdr update. To remove herdr-slack, see [uninstall](docs/deployment.md#7-uninstall).
 
+### Install from herdr.dev
+
+The layout is also on herdr.dev. There, tell your coding agent to add it. The agent reads [`RECIPE.md`](RECIPE.md) and tells you what the mods do. Then it copies `layouts/main-slack.json` and the two folders in `mods/` into `~/.config/herdr-app/`, checks the mods and switches to the layout.
+
+- You still need the Slack app, the token and the status-line snippet (steps 1 to 3 above).
+- The copied `layouts/main-slack.json` is a snapshot. It does not get later Herdr changes to `main.json`. To get them, use the quick start above, and run `./install.sh` after each Herdr update.
+
 ## Security
 
 - The Slack token stays in the macOS Keychain and in memory. The mods send it only in an `Authorization` header or to `curl` on stdin.
@@ -81,6 +88,7 @@ Details are in [`SECURITY.md`](SECURITY.md) and the [token and privacy model](do
 ## More
 
 - [`docs/`](docs/README.md): the architecture, the decisions (ADRs), the interfaces, deployment, operations and testing.
+- [`RECIPE.md`](RECIPE.md): the herdr.dev brief. It tells what the layout shows, how it behaves, what it is built from, and what to watch out for.
 - [`AGENTS.md`](AGENTS.md): the commands and the rules for coding agents that change this repo.
 
 ## License

@@ -23,15 +23,16 @@ The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure
 
 ## Commands
 
-| Task                             | Command                                                                    |
-| -------------------------------- | -------------------------------------------------------------------------- |
-| Run the unit tests               | `npm test`                                                                 |
-| Check the format                 | `scripts/format.sh --check`                                                |
-| Format files                     | `scripts/format.sh [PATH...]`                                              |
-| Install the mods and the layout  | `./install.sh`                                                             |
-| Check a mod                      | `herdr-app check ~/.config/herdr-app/mods/slack` (also `mods/usage-meter`) |
-| Show the window's errors         | `herdr-app status`                                                         |
-| Make `mods/slack/emoji.js` again | `node scripts/gen-emoji.mjs`                                               |
+| Task                             | Command                                                                                                                                   |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Run the unit tests               | `npm test`                                                                                                                                |
+| Check the format                 | `scripts/format.sh --check`                                                                                                               |
+| Format files                     | `scripts/format.sh [PATH...]`                                                                                                             |
+| Install the mods and the layout  | `./install.sh`                                                                                                                            |
+| Check a mod                      | `herdr-app check ~/.config/herdr-app/mods/slack` (also `mods/usage-meter`)                                                                |
+| Show the window's errors         | `herdr-app status`                                                                                                                        |
+| Make `mods/slack/emoji.js` again | `node scripts/gen-emoji.mjs`                                                                                                              |
+| Refresh the layout snapshot      | `jq -f layout/main-slack.jq ~/.config/herdr-app/layouts/main.json > layouts/main-slack.json && scripts/format.sh layouts/main-slack.json` |
 
 - Before each commit, run `npm test`, `scripts/format.sh --check`, `./install.sh`, both `herdr-app check` commands and `herdr-app status`. The status must show `"errors": []`.
 - Turn on the pre-commit hook once per clone: `git config core.hooksPath .githooks`.

@@ -90,3 +90,16 @@ The repo is public. The images in `docs/assets/` must never show real Slack cont
   5. Crop the overlay out of the shot. Remove metadata chunks from the PNG.
   6. Remove the scratch folder and its folder under `~/.config/herdr-app/data/`.
 - Look at every image before you commit it.
+
+### `preview.png` for herdr.dev
+
+`preview.png` at the repo root shows the whole `main-slack` window. It is not a screenshot. `scripts/preview.py` builds it from `panel.png`, `usage-meter.png` and `button.png`, and draws the sidebar, the tab bar, the terminal card and the status bar with invented names and text. It takes the colours from the screens.
+
+1. Make the screens in `docs/assets/screens/` again first, if the mods changed.
+2. Run the script. It needs macOS for the system fonts:
+
+   ```sh
+   uv run --with pillow==11.3.0 python scripts/preview.py
+   ```
+
+3. Look at `preview.png` before you commit it.

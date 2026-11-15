@@ -88,6 +88,8 @@ The installer does these steps in this order:
 6. Runs `herdr-app do layout.switch --name main-slack`.
 
 - If `jq` or a check fails, the script stops. The old `main-slack.json` stays.
+- The installer builds the installed `main-slack.json` from the current Herdr `main.json` each time. It does not use the file `layouts/main-slack.json` in the repo.
+- `layouts/main-slack.json` in the repo is a snapshot for herdr.dev. People who install from herdr.dev copy this file ([`RECIPE.md`](../RECIPE.md)). After a Herdr update that changes `main.json`, refresh the snapshot with the command in [`AGENTS.md`](../AGENTS.md#commands).
 - The installer never writes `main.json` or a shipped mod.
 - You can run the installer again at any time.
 
