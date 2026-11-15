@@ -97,14 +97,24 @@ The repo is public. The images in `docs/assets/` must never show real Slack cont
   1. Copy the mod to a scratch folder under `~/.config/herdr-app/mods/`, with `"place": "none"` and an `overlay` size in `mod.json`.
   2. Change the scratch copy so that it reads invented items from a local file. Remove every Slack call, post, Keychain read and probe from it. Stub `shared` and `setShared`, so that the copy never reads or writes the real `shared.json`.
   3. Run `herdr-app check` on the scratch copy.
-  4. Open it with `herdr-app do mod.open --name <scratch name>`, take `herdr-app shot`, and run `mod.open` again to close it.
+  4. Open it with `herdr-app do mod.open --name <scratch name>`, take `herdr-app shot`, and run `mod.open` again to close it. Wait about 5 s before the shot: message images load after the first frame.
   5. Crop the overlay out of the shot. Remove metadata chunks from the PNG.
   6. Remove the scratch folder and its folder under `~/.config/herdr-app/data/`.
 - Look at every image before you commit it.
 
 ### `preview.png` for herdr.dev
 
-`preview.png` at the repo root shows the whole `main-slack` window, with the conversation view and its composer in the panel. It is not a screenshot. `scripts/preview.py` builds it from `conversation.png`, `usage-meter.png` and `button.png`, and draws the sidebar, the tab bar, the terminal card and the status bar with invented names and text. It takes the colours from the screens, `panel.png` included.
+`preview.png` at the repo root is the picture on herdr.dev and at the top of the README. It is 2400 x 1500 px. It is not a screenshot. It shows a mockup of the `main-slack` window at 1.4 times the UI scale, with rounded corners and a soft shadow, on a dark gradient.
+
+- **Real renders of the mods**, from invented data:
+  - `preview-panel.png`: the conversation view of a thread, 368 x 774 px, with an image, reactions, a file and a typed draft in the composer. Make it with the scratch-copy method above, with an overlay of that size. Put the draft in the composer and set the composer's focus look.
+  - `usage-meter.png` and `button.png`.
+- **Drawn by the script**, with invented names and text:
+  - the sidebar, with spaces and agents (working, done and idle)
+  - the tab bar and the status bar
+  - two agent panes: a Claude Code session that Send to agent started, and a Codex test run.
+- **Colours:** from the screens (`panel.png` included) and from Herdr's default theme.
+- **Labels:** three small pills in the margin point at Send to agent, the usage meter and the composer. `--no-labels` leaves them out.
 
 1. Make the screens in `docs/assets/screens/` again first, if the mods changed.
 2. Run the script. It needs macOS for the system fonts:
@@ -113,4 +123,5 @@ The repo is public. The images in `docs/assets/` must never show real Slack cont
    uv run --with pillow==11.3.0 python scripts/preview.py
    ```
 
-3. Look at `preview.png` before you commit it.
+3. To compare, write a version without labels to another file: `scripts/preview.py --no-labels --out /tmp/plain.png`.
+4. Look at `preview.png` at full size and at about 400 px wide before you commit it.
