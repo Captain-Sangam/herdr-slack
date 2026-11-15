@@ -2,7 +2,7 @@
 
 # herdr-slack
 
-herdr-slack adds two mods to Herdr.app on macOS. One is a usage meter for Claude and Codex. The other is a read-only Slack panel for your DMs and mentions. One click sends a Slack message to a Claude Code agent.
+herdr-slack adds two mods to Herdr.app on macOS. One is a usage meter for Claude and Codex. The other is a Slack panel for your DMs and mentions, where you can read a conversation and reply. One click sends a Slack message to a Claude Code agent.
 
 herdr-slack is an independent project. It is not made by, or affiliated with, the makers of Herdr or Slack.
 
@@ -11,8 +11,8 @@ herdr-slack is an independent project. It is not made by, or affiliated with, th
 <table>
   <tr>
     <td align="center"><img src="docs/assets/screens/panel.png" width="260" alt="Slack panel with DMs, a thread, a group DM and mentions"><br>Slack panel</td>
-    <td align="center"><img src="docs/assets/screens/conversation.png" width="260" alt="Thread view with reactions, an image and a file"><br>Conversation view</td>
-    <td align="center"><img src="docs/assets/screens/filters.png" width="260" alt="Include and exclude filters above the list"><br>Filters</td>
+    <td align="center"><img src="docs/assets/screens/conversation.png" width="260" alt="Thread view with Slack formatting, reactions, a file and the reply composer"><br>Conversation view</td>
+    <td align="center"><img src="docs/assets/screens/filters.png" width="260" alt="Include and exclude filters and the Send to agent settings above the list"><br>Filters and agent</td>
   </tr>
   <tr>
     <td align="center"><img src="docs/assets/screens/usage-meter.png" width="260" alt="Usage meter with Claude 5h, Claude 7d and Codex 7d"><br>Usage meter</td>
@@ -35,16 +35,20 @@ The screens show invented people, channels and numbers. They come from the real 
   - Your DMs, group DMs and mentions, one row for each conversation or thread, with photos and unread counts.
   - Tabs for All, Mentions and DMs, and an Unread toggle.
   - Include and exclude filters with `*` and `?` patterns.
-  - A read-only conversation view: DM history, threads, and the messages around a mention, with images, files and reactions.
-  - Open in Slack, Dismiss, and **Send to agent**. Send to agent opens Claude Code in a Herdr space. Claude reads the thread with its own Slack tools. The space (`space`), the folder (`~/code`) and the agent command (`ARGV`) are constants in `mods/slack/lib.js`.
-- **Read-only:** nothing in Slack changes. No replies, no reactions and no read marks.
+  - A conversation view: DM history, threads, and the messages around a mention, with images, files and reactions.
+  - A reply composer at the bottom of the view. Enter sends, Shift+Enter adds a line. A reply goes to the DM, the group DM or the thread. For a channel mention outside a thread, it starts a thread under the mention.
+  - Slack formatting in the view: bold, italic, strike, code, code blocks, quotes, lists, links and mentions. The list previews stay plain text.
+  - Open in Slack, Dismiss, and **Send to agent**. Send to agent opens an agent in the Herdr space `space` at `~/code`.
+  - Settings for Send to agent, under the gear: the agent (Claude by default, or another installed agent such as Codex) and the model (`claude-opus-5-5` by default, empty for the agent's own default).
+  - Claude reads the thread with its own Slack tools. Another agent gets the conversation as text in its first message, marked as untrusted data.
+- **Posts only on Send:** a reply goes out only when you click Send or press Enter in the composer. Nothing posts on its own. No reactions and no read marks.
 - **No cloned Herdr files:** `install.sh` builds a `main-slack` layout from Herdr's own `main.json`, so Herdr's updates keep coming.
 
 ## Requirements
 
 - macOS.
 - Herdr.app, with `herdr-app` and `hc` on the `PATH`.
-- Claude Code, for the usage meter and Send to agent.
+- Claude Code, for the usage meter and Send to agent. Codex or another agent from Herdr's + menu is optional for Send to agent.
 - Codex (optional), for its usage row.
 - `jq` and `curl`.
 - A Slack workspace that lets you install an app with user scopes.
@@ -80,7 +84,7 @@ The layout is also on herdr.dev. There, tell your coding agent to add it. The ag
 ## Security
 
 - The Slack token stays in the macOS Keychain and in memory. The mods send it only in an `Authorization` header or to `curl` on stdin.
-- The Slack app has read-only scopes and no bot user.
+- The Slack app has read scopes, `chat:write` for your replies, and no bot user. The token can post as you, but the mods post only when you send a reply.
 - Send to agent gives Slack content to an agent that has tool access. A message can hold instructions for the agent. Send only messages that you trust, and keep approval prompts on.
 
 Details are in [`SECURITY.md`](SECURITY.md) and the [token and privacy model](docs/architecture.md#5-token-and-privacy-model).

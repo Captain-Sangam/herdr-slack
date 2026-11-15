@@ -20,7 +20,7 @@ This page tells how to set up herdr-slack on a Mac. It covers the Slack app, the
 5. Click Install to Workspace. If Slack asks for an admin approval, ask an admin to approve the app.
 6. Open OAuth & Permissions. Copy the User OAuth Token. It starts with `xoxp`.
 
-The manifest asks for read-only user scopes and no bot user ([interfaces](interfaces.md#21-methods-and-scopes)).
+The manifest asks for read user scopes, `chat:write` for replies, and no bot user ([interfaces](interfaces.md#21-methods-and-scopes)). The token can post as you. The mods post only when you send a reply.
 
 ## 3. Store the token in the Keychain
 
@@ -114,6 +114,10 @@ Files that herdr-slack writes:
   2. Under User Token Scopes, add the scopes that `slack-app-manifest.yaml` lists and the app does not have.
   3. Click Reinstall to Workspace, then allow it.
   4. If the User OAuth Token changed, store it again with [step 3](#3-store-the-token-in-the-keychain).
+- **To turn on replies** (an app made before `chat:write`):
+  1. Do the steps above, and add the user scope `chat:write`.
+  2. Make sure that Slack shows "Send messages on your behalf" when you reinstall.
+  3. Open a conversation in the panel and send a reply. Until the reinstall, each reply fails with "Needs the chat:write permission".
 
 ## 7. Uninstall
 

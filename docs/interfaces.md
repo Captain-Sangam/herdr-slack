@@ -11,23 +11,28 @@ This page lists the outside facts that the code depends on. They come from Herdr
 
 The mods import these names. The installed guide `~/.config/herdr-app/AGENTS.md` and the `.d.ts` files next to it describe them.
 
-| Module      | Names                                                                                                                         |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `gpui-kit`  | `View`, `div`, `svg`, `image`                                                                                                 |
-| `gpui-base` | `h_flex`, `v_flex`, `InputState`, `Input`, `Scrollbar`, `ScrollHandle`                                                        |
-| `herdr`     | `exec`, `hc`, `home`, `appHome`, `readTextFile`, `theme`, `layout`, `notify`, `run`, `props`, `shared`, `setShared`, `spaces` |
-| Built-ins   | `fetch`, `localStorage`, `console.log`                                                                                        |
-| `cx`        | `cx.timer.every`, `cx.spawn`, `cx.notify`, `cx.focus_handle`, `cx.stop_propagation`                                           |
+| Module      | Names                                                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gpui-kit`  | `View`, `div`, `svg`, `image`                                                                                                                |
+| `gpui-base` | `h_flex`, `v_flex`, `InputState`, `Input`, `TextareaState`, `Textarea`, `Scrollbar`, `ScrollHandle`, `TextView`                              |
+| `herdr`     | `exec`, `hc`, `home`, `appHome`, `readTextFile`, `theme`, `layout`, `notify`, `run`, `props`, `shared`, `setShared`, `spaces`, `knownAgents` |
+| Built-ins   | `fetch`, `localStorage`, `console.log`                                                                                                       |
+| `cx`        | `cx.timer.every`, `cx.spawn`, `cx.notify`, `cx.focus_handle`, `cx.stop_propagation`, `cx.bind_keys`                                          |
 
 Facts that the design relies on:
 
 - A mod copy starts the first time it shows. It stays alive while its block is in the layout, shown or not.
 - `setShared` draws every mod again.
 - `localStorage` is separate for each mod copy.
-- `fetch` takes request headers. Its response has `status`, `ok`, `url`, `text()` and `json()`, but no response headers. So the mod cannot read `Retry-After`.
+- `fetch` takes `method`, `headers` and a string `body`. Its response has `status`, `ok`, `url`, `text()` and `json()`, but no response headers. So the mod cannot read `Retry-After`.
+- `TextareaState` has no way to change its placeholder, so the panel makes one for each reply target. `set_auto_grow(1, 6)` grows it to 6 rows. `release()` frees it.
+- The text input's own bindings for `enter`, `shift-enter` and `escape` are in the key context `Input`. A `cx.bind_keys` binding with the context `SlackReply > Input` matches at the same depth and comes later, so it wins. Escape goes on to the view's `on_key_down`.
 - `exec` has a default timeout of 30 s. It returns `{code, stdout, stderr}`.
 - `run` returns nothing, so it cannot report a failure. Send to agent uses `herdr-app do` through `exec` for that reason.
+- `knownAgents()` gives the agents of the + menu: `key`, `name`, `icon`, `tint`, `run` (the argv) and `installed`. Codex's `run` is `codex --no-daemon`. It checks at most once a minute and rejects when the check fails.
 - `image()` reads paths relative to `~/.config/herdr-app`. A save of a file under `mods/` reloads the mod.
+- `TextView.markdown(id, text)` draws CommonMark, with strike (`~~`). `on_link_click` replaces its own link handler.
+- Herdr's default UI font draws no bold and no italic, also through `font_weight` and `italic()`. The font family `.SystemUIFont` draws both, so the view sets it on its `TextView`.
 
 ### 1.2 Layout ids
 
@@ -45,8 +50,8 @@ Facts that the design relies on:
 | ------------------------------------------------------------------------ | ------------ | ------------------------------------------------------ |
 | `run("layout.select", {stack: "panel-body", child: "slack"})`            | Button copy  | Shows the Slack child in the panel stack.              |
 | `run("layout.show", {id: "panel"})`, `run("layout.hide", {id: "panel"})` | Button copy  | Opens or closes the panel column.                      |
-| `herdr-app do tab.new {space, name, argv, task}`                         | Panel copy   | Adds a Claude tab to the space `space`.                |
-| `herdr-app do space.new {name, folder, argv, task}`                      | Panel copy   | Makes the space `space` at `~/code` with a Claude tab. |
+| `herdr-app do tab.new {space, name, argv, task}`                         | Panel copy   | Adds an agent tab to the space `space`.                |
+| `herdr-app do space.new {name, folder, argv, task}`                      | Panel copy   | Makes the space `space` at `~/code` with an agent tab. |
 | `herdr-app do layout.switch --name main-slack`                           | `install.sh` | Shows the new layout.                                  |
 | `herdr-app check <mod folder>`                                           | `install.sh` | Loads a mod once and reports errors.                   |
 
@@ -81,7 +86,7 @@ The usage meter runs these for the probe:
 
 ### 2.1 Methods and scopes
 
-All calls are `GET https://slack.com/api/<method>` with the user token in an `Authorization: Bearer` header.
+All calls send the user token in an `Authorization: Bearer` header. The reads are `GET https://slack.com/api/<method>`. The only write is `POST https://slack.com/api/chat.postMessage` with a JSON body.
 
 | Method                  | Caller        | Parameters                                                    | Scopes                                                             |
 | ----------------------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
@@ -91,11 +96,15 @@ All calls are `GET https://slack.com/api/<method>` with the user token in an `Au
 | `conversations.info`    | Button, panel | `channel`                                                     | `channels:read`, `groups:read`, `im:read`, `mpim:read`             |
 | `conversations.members` | Button        | `channel`, `limit=50`                                         | `mpim:read`                                                        |
 | `conversations.history` | Panel         | `channel`, `limit`, `cursor`, `latest`, `oldest`, `inclusive` | `channels:history`, `groups:history`, `im:history`, `mpim:history` |
+|                         |               | Also for Send to agent to another agent than Claude           |                                                                    |
 | `conversations.replies` | Panel         | `channel`, `ts`, `limit=200`, `cursor`                        | The same `*:history` scopes                                        |
 | File thumbnail URLs     | Button, panel | `GET` on `thumb_360` (or the nearest size)                    | `files:read`                                                       |
+| `chat.postMessage`      | Panel         | JSON: `channel`, `text`, `thread_ts` for a thread reply       | `chat:write`                                                       |
 
 - The two search queries are `<@USER_ID>` (mentions) and `to:me` (DMs and group DMs). `USER_ID` comes from `auth.test`.
-- `slack-app-manifest.yaml` asks for exactly the scopes in this table. All of them are read-only.
+- `slack-app-manifest.yaml` asks for exactly the scopes in this table. All of them are read scopes except `chat:write`.
+- `chat.postMessage` with a user token posts as that user. The body is `application/json; charset=utf-8`. The text goes as typed: Slack escapes `<`, `>` and `&` itself.
+- Its answer has `ts` and `message`. The view shows that message at once.
 - The app has no bot user, and token rotation is off, so the user token does not expire.
 
 ### 2.2 Fields the code reads
@@ -113,7 +122,10 @@ All calls are `GET https://slack.com/api/<method>` with the user token in an `Au
 
 - Mrkdwn tokens: `<@U123|name>`, `<#C123|name>`, `<!here>`, `<!subteam^S123|@team>` and `<https://url|label>`. Search results keep typed angle brackets, such as `v<major>`, without escapes, so only these forms count as tokens.
 - Entities: `&lt;`, `&gt;` and `&amp;`. The code decodes them last.
-- Emoji: `:short_name:`, with an optional `:skin-tone-2:` to `:skin-tone-6:`. The names follow iamcal/emoji-data. Custom workspace emoji stay as dimmed `:name:` text.
+- Emoji: `:short_name:`, with an optional `:skin-tone-2:` to `:skin-tone-6:`. The names follow iamcal/emoji-data. Custom workspace emoji stay as `:name:` text, dimmed in the list.
+- Formatting: `*bold*`, `_italic_`, `~strike~`, `` `code` `` and ` ``` ` code blocks. Quote lines start with `&gt;`. Bullet lines start with `•`, `◦`, `-` or `*`, and numbered lines with `1.` or `1)`.
+- A marker opens after a start, a space or punctuation, and closes before an end, a space or punctuation. So `snake_case` and `2*3` stay literal.
+- `mrkdwn()` maps these to CommonMark: `**bold**`, `*italic*`, `~~strike~~` and `[label](<url>)`. It changes nothing inside code, decodes the entities once, and escapes all other Markdown characters. A hard line break keeps each Slack line break.
 - A reply's permalink has `?thread_ts=<ts>`. A top-level message's permalink does not.
 - A group DM's name is `mpdm-ann--bea--chen-1`. The code shows it as `ann, bea, chen`.
 - Bot messages often have an empty `text`. The code then takes the text from `attachments` (`pretext`, `title`, `text`, else `fallback`) or from `blocks`.
@@ -127,6 +139,19 @@ All calls are `GET https://slack.com/api/<method>` with the user token in an `Au
 | `invalid_auth`, `not_authed`, `token_revoked`, `token_expired`, `account_inactive`, `missing_scope`, `no_permission` | `auth`                                |
 | Any other `ok: false`                                                                                                | `api`, or skipped for a single lookup |
 | `fetch` throws, or the body is not JSON                                                                              | `network`                             |
+
+A failed reply shows one line over the composer:
+
+| `chat.postMessage` error | Line in the view                                                              |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `missing_scope`          | Needs the chat:write permission: update the Slack app, see docs/deployment.md |
+| `not_in_channel`         | You are not in this channel. Join it in Slack to reply.                       |
+| `is_archived`            | This channel is archived. Slack does not take replies in it.                  |
+| `channel_not_found`      | Slack cannot find this conversation.                                          |
+| `restricted_action`      | A workspace setting stops you from posting here.                              |
+| `msg_too_long`           | The message is too long for Slack. Make it shorter.                           |
+| `ratelimited`, HTTP 429  | Slack rate limit. Wait a minute, then send again.                             |
+| `fetch` throws           | Cannot reach Slack. Look in Slack before you send again.                      |
 
 ## 3. Claude Code status line
 

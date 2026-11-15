@@ -1,5 +1,6 @@
 # Builds preview.png, the herdr.dev picture of the main-slack layout, from the
-# invented-data screens in docs/assets/screens/. It draws the rest of the window
+# invented-data screens in docs/assets/screens/. The panel shows the conversation
+# view, with its composer at the bottom of the panel. It draws the rest of the window
 # (sidebar, tab bar, terminal card, status bar) with invented names and text only.
 # Colours come from the screens. macOS only (system fonts).
 #   uv run --with pillow==11.3.0 python scripts/preview.py
@@ -13,7 +14,9 @@ S = 2  # the screens are 2x renders; compose at 2x, save at 1x
 W, H = 1600, 1000  # logical window size
 SIDEBAR, PANEL, TABS, STATUS, METER, FOOTER = 268, 368, 42, 28, 100, 69
 
-panel = Image.open(SCREENS / "panel.png").convert("RGB")
+panel = Image.open(SCREENS / "panel.png").convert("RGB")  # colours only
+conversation = Image.open(SCREENS / "conversation.png").convert("RGB")
+COMPOSER = 120  # 2x rows at the bottom of conversation.png: the composer
 meter = Image.open(SCREENS / "usage-meter.png").convert("RGB")
 button = Image.open(SCREENS / "button.png").convert("RGB")
 
@@ -133,10 +136,13 @@ lines = [
 for n, (line, color) in enumerate(lines):
     if line:
         text(left + 24, top + 48 + n * 22, line, color, font=mono)
-crop = panel.crop((0, 0, panel.width, 1090))
-img.paste(crop, (panel_x * S, top * S))
-rect(panel_x, top + crop.height // S - 12, panel_x + PANEL, bottom, fill=background, outline=border, radius=10)
-d.rectangle((panel_x * S + S, (top + crop.height // S - 12) * S, (panel_x + PANEL) * S - S - 1, (top + crop.height // S) * S), fill=background)
+# The view's messages at the top of the card, its composer at the bottom, and an empty
+# row of the view (with the card's own borders) stretched between them.
+w, h = conversation.size
+gap = (bottom * S - COMPOSER) - (top * S + h - COMPOSER)
+img.paste(conversation.crop((0, 0, w, h - COMPOSER)), (panel_x * S, top * S))
+img.paste(conversation.crop((0, h - COMPOSER - 2, w, h - COMPOSER - 1)).resize((w, gap)), (panel_x * S, top * S + h - COMPOSER))
+img.paste(conversation.crop((0, h - COMPOSER, w, h)), (panel_x * S, bottom * S - COMPOSER))
 
 # ── Status bar ──
 hline(left, W, H - STATUS)

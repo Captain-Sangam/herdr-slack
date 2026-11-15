@@ -19,18 +19,20 @@ This folder holds the documentation of herdr-slack. Start with the architecture 
 
 ## Decisions (ADR)
 
-| ADR                                                | Decision                                                      | Status                          |
-| -------------------------------------------------- | ------------------------------------------------------------- | ------------------------------- |
-| [0001](adr/0001-generate-layout.md)                | Generate the layout from Herdr's `main.json` on each install. | Accepted                        |
-| [0002](adr/0002-no-cloned-mods.md)                 | No shipped mod is cloned. The Slack button is its own block.  | Accepted                        |
-| [0003](adr/0003-poller-in-button.md)               | The poller lives in the button copy.                          | Accepted                        |
-| [0004](adr/0004-two-searches.md)                   | Two `search.messages` calls for each poll.                    | Accepted                        |
-| [0005](adr/0005-token-in-keychain.md)              | The token is in the Keychain, sent in a header or on stdin.   | Accepted                        |
-| [0006](adr/0006-read-only-unread.md)               | Read-only unread state from `last_read`.                      | Accepted                        |
-| [0007](adr/0007-haiku-usage-probe.md)              | A Haiku probe refreshes stale Claude usage.                   | Accepted                        |
-| [0008](adr/0008-codex-usage-from-logs.md)          | Codex usage comes from its session logs.                      | Accepted                        |
-| [0009](adr/0009-exclude-covers-dms.md)             | Exclude also covers DMs.                                      | Accepted, replaces a first rule |
-| [0010](adr/0010-grouping-and-conversation-view.md) | Rows by conversation, and a conversation view in the panel.   | Accepted, replaces a first rule |
+| ADR                                                    | Decision                                                      | Status                          |
+| ------------------------------------------------------ | ------------------------------------------------------------- | ------------------------------- |
+| [0001](adr/0001-generate-layout.md)                    | Generate the layout from Herdr's `main.json` on each install. | Accepted                        |
+| [0002](adr/0002-no-cloned-mods.md)                     | No shipped mod is cloned. The Slack button is its own block.  | Accepted                        |
+| [0003](adr/0003-poller-in-button.md)                   | The poller lives in the button copy.                          | Accepted                        |
+| [0004](adr/0004-two-searches.md)                       | Two `search.messages` calls for each poll.                    | Accepted                        |
+| [0005](adr/0005-token-in-keychain.md)                  | The token is in the Keychain, sent in a header or on stdin.   | Accepted                        |
+| [0006](adr/0006-read-only-unread.md)                   | Read-only unread state from `last_read`.                      | Accepted                        |
+| [0007](adr/0007-haiku-usage-probe.md)                  | A Haiku probe refreshes stale Claude usage.                   | Accepted                        |
+| [0008](adr/0008-codex-usage-from-logs.md)              | Codex usage comes from its session logs.                      | Accepted                        |
+| [0009](adr/0009-exclude-covers-dms.md)                 | Exclude also covers DMs.                                      | Accepted, replaces a first rule |
+| [0010](adr/0010-grouping-and-conversation-view.md)     | Rows by conversation, and a conversation view in the panel.   | Accepted, replaces a first rule |
+| [0011](adr/0011-replies-from-the-conversation-view.md) | Replies from the conversation view, only on an explicit Send. | Accepted, replaces a first rule |
+| [0012](adr/0012-agent-and-model-settings.md)           | Agent and model settings for Send to agent.                   | Accepted, replaces `ARGV`       |
 
 To add a decision:
 

@@ -1,6 +1,6 @@
 # ADR 0006: Read-only unread state from `last_read`
 
-- **Status:** Accepted, 2026-11-15.
+- **Status:** Accepted, 2026-11-15. The unread rules stay. [ADR 0011](0011-replies-from-the-conversation-view.md) adds `chat:write` for replies, so the token is no longer read-only.
 
 ## Context
 

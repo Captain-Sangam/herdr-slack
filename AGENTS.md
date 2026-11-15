@@ -3,7 +3,7 @@
 herdr-slack adds two mods and a generated layout to Herdr.app on macOS:
 
 - `mods/usage-meter/`: Claude 5-hour and 7-day use and Codex 7-day use, above Settings in the sidebar.
-- `mods/slack/`: a Slack button in the tab bar and a Slack panel. The panel lists DMs, group DMs and mentions, has a read-only conversation view, and has Send to agent.
+- `mods/slack/`: a Slack button in the tab bar and a Slack panel. The panel lists DMs, group DMs and mentions, has a conversation view with a reply composer, and has Send to agent.
 - `install.sh` and `layout/main-slack.jq`: build `~/.config/herdr-app/layouts/main-slack.json` from Herdr's own `main.json`.
 
 The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure logic is in each mod's `lib.js`, and `test/` tests it. Everything else is in [`docs/`](docs/README.md).
@@ -51,7 +51,8 @@ The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure
   - a screenshot of a real window.
 - **`.agents/`:** the private council record. It is local only. It never goes to the public repo, and no public file links to it.
 - **Herdr:** drive it only with `hc` and `herdr-app`. Never use the legacy `herdr` CLI.
-- **Behaviour:** keep the mods read-only toward Slack. No posts, reactions or read marks.
+- **Behaviour:** posts only from an explicit Send in the composer; no reactions, no read marks, no automatic posts.
+- **Send to agent:** the agent and the model are settings in `shared("slack.agent")`, set under the panel's gear. The defaults (`AGENT`: Claude with `claude-opus-5-5`) and the model suggestions (`MODELS`) are in `mods/slack/lib.js`. Never put the token in the agent task.
 
 ## Conventions
 

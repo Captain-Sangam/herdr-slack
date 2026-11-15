@@ -1,8 +1,9 @@
 // Slack DMs, group DMs and @-mentions. Two copies in main-slack:
 // - role "button" (tab bar, always shown): reads the token, polls Slack every minute,
 //   publishes shared "slack.items" and "slack.status", draws the button and badge.
-// - role "panel" (in panel-body): renders the list and acts on it, and opens a read-only
-//   conversation view. The view's messages stay in this copy's memory, never in shared.
+// - role "panel" (in panel-body): renders the list and acts on it, and opens a
+//   conversation view with a reply composer. The view's messages and the drafts stay
+//   in this copy's memory, never in shared. Only an explicit Send posts (ADR 0011).
 
 import { View, div, svg, image } from "gpui-kit";
 import {
@@ -12,6 +13,9 @@ import {
   Input,
   Scrollbar,
   ScrollHandle,
+  TextView,
+  TextareaState,
+  Textarea,
 } from "gpui-base";
 import {
   exec,
@@ -25,6 +29,7 @@ import {
   home,
   appHome,
   notify,
+  knownAgents,
 } from "herdr";
 import {
   toItem,
@@ -57,20 +62,23 @@ import {
   clock,
   stackOf,
   customParts,
+  hostOf,
+  linkable,
+  AUTH,
+  replyTarget,
+  replyBody,
+  postReply,
+  replyError,
+  AGENT,
+  MODELS,
+  modelFlag,
+  validModel,
+  contextText,
 } from "./lib.js";
 
 const API = "https://slack.com/api/";
 // Message files need the token: it goes from the Keychain to curl on stdin, never in argv.
 const FILE_GET = `security find-generic-password -s herdr-slack -w | sed 's/.*/header = "Authorization: Bearer &"/' | curl -sfL --max-time 20 -K - -o "$1" -w '%{content_type}' "$2"`;
-const AUTH = new Set([
-  "invalid_auth",
-  "not_authed",
-  "token_revoked",
-  "token_expired",
-  "account_inactive",
-  "missing_scope",
-  "no_permission",
-]);
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -573,6 +581,37 @@ export default class Slack extends View {
       input.on("submit", () => this.saveFilters());
       input.on("blur", () => this.saveFilters());
     }
+    // Send to agent settings (ADR 0012): the installed agents, and the model field.
+    this.agents = [];
+    cx.spawn(async (cx) => {
+      this.agents = await knownAgents().catch(() => []);
+      cx.notify();
+    });
+    this.model = InputState.new({
+      placeholder: "the agent's own default",
+      value: this.agentSettings().model,
+    });
+    this.model.on("submit", (_e, cx) => this.saveModel(cx));
+    this.model.on("blur", (_e, cx) => this.saveModel(cx));
+    this.modelError = null;
+    // Reply composers by target: the drafts live here only, never in shared.
+    this.replies = new Map();
+    this.posting = null; // the target key of the one post in flight
+    this.typing = false;
+    // Enter sends and Shift+Enter adds a line, in the composer only. These bindings sit
+    // at the input's own depth and come later, so they win over its Enter.
+    cx.bind_keys([
+      {
+        keystroke: "enter",
+        action: "slack-reply-send",
+        context: "SlackReply > Input",
+      },
+      {
+        keystroke: "shift-enter",
+        action: "slack-reply-line",
+        context: "SlackReply > Input",
+      },
+    ]);
     // Relative times ("5m") move on without new data; an open view refreshes.
     cx.timer.every(60000, (cx) => {
       if (this.views.length) this.loadView(cx);
@@ -601,17 +640,140 @@ export default class Slack extends View {
 
   openView(cx) {
     this.stick = true; // at the bottom until the person scrolls up
-    this.handle.focus();
+    this.composer(this.views.at(-1)).state.focus();
     this.loadView(cx, { first: true });
     cx.notify();
   }
 
-  // Back to the previous view, or to the list at its tab and scroll position.
+  // Back to the previous view, or to the list at its tab and scroll position. An empty
+  // composer that no open view uses is released; a draft stays for the next visit.
   back(cx) {
-    this.views.pop();
+    const v = this.views.pop(),
+      key = replyTarget(v).key,
+      r = this.replies.get(key);
+    this.handle.focus();
+    if (
+      r &&
+      !r.state.value().trim() &&
+      this.posting !== key &&
+      !this.views.some((w) => replyTarget(w).key === key)
+    ) {
+      this.replies.delete(key);
+      r.state.release();
+    }
     if (!this.views.length) this.viewRow = null;
     this.stick = false;
     cx.notify();
+  }
+
+  // The composer for a view, made on first use. Each target keeps its own text.
+  composer(v) {
+    const target = replyTarget(v, this.viewRow);
+    let r = this.replies.get(target.key);
+    if (r) return r;
+    const state = TextareaState.new({ placeholder: target.placeholder });
+    state.set_auto_grow(1, 6);
+    r = { state, target, error: null, empty: true };
+    state.on("change", (_e, cx) => {
+      const empty = !state.value().trim();
+      if (empty !== r.empty || r.error) {
+        r.empty = empty;
+        r.error = null;
+        cx.notify();
+      }
+    });
+    state.on("focus", (_e, cx) => {
+      this.typing = true;
+      cx.notify();
+    });
+    state.on("blur", (_e, cx) => {
+      this.typing = false;
+      cx.notify();
+    });
+    // Only if the Enter binding above does not reach this input: its own Enter has
+    // typed a line break at the cursor, which the send takes out again.
+    state.on("submit", (e, cx) => {
+      if (e?.shift) return;
+      const at = state.selected_range()?.start ?? 0,
+        text = state.value();
+      if (text[at - 1] === "\n")
+        state.set_value(text.slice(0, at - 1) + text.slice(at));
+      this.sendReply(r, cx);
+    });
+    this.replies.set(target.key, r);
+    return r;
+  }
+
+  // Decision 11: one post at a time, only from Send or Enter, never retried. A failure
+  // keeps the text and shows Slack's error; a success clears it and shows the message.
+  sendReply(r, cx) {
+    const body = replyBody(r.target, r.state.value());
+    if (!body || this.posting) return;
+    const v = this.views.at(-1);
+    this.posting = r.target.key;
+    r.error = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let res;
+      try {
+        await this.ensureToken();
+        res = await postReply(body, { fetch, token: this.token });
+      } catch (e) {
+        res = { ok: false, error: e.kind ?? "network" };
+      }
+      this.posting = null;
+      if (res.ok) {
+        r.state.set_value("");
+        r.empty = true;
+        this.markSeen(...(this.viewRow?.items ?? []).map((i) => i.id));
+        if (this.views.at(-1) === v) this.showPosted(v, res.message, cx);
+      } else {
+        r.error = replyError(res.error);
+        if (AUTH.has(res.error) && res.error !== "missing_scope")
+          this.token = null;
+      }
+      cx.notify();
+    });
+  }
+
+  // The posted message shows at once, then the view loads again. A reply under a
+  // mention outside a thread opens that thread, where the reply is.
+  showPosted(v, message, cx) {
+    if (v.mode === "around") {
+      const anchor = v.raw.filter((m) => m.ts === v.anchor);
+      this.openThread(v.anchor, cx);
+      const t = this.views.at(-1);
+      t.posted = [message];
+      this.show(t, [...anchor, message]);
+      return;
+    }
+    v.posted = [...(v.posted ?? []), message];
+    this.show(v, mergeMessages(v.raw, [message]));
+    this.stick = true;
+    this.bottom(v);
+    this.composer(v).state.focus();
+    this.loadView(cx);
+  }
+
+  show(v, raw) {
+    const { names, images } = this.names();
+    v.raw = raw;
+    v.messages = collapse(
+      raw.map((m) =>
+        toMessage(m, {
+          names,
+          images,
+          me: shared("slack.me") ?? null,
+          host: hostOf(this.viewRow?.latest?.link),
+        }),
+      ),
+    );
+  }
+
+  bottom(v) {
+    const lead = v.mode === "history" && v.cursor ? 1 : 0; // "Load older"
+    if (v.messages.length)
+      this.viewScroll.scroll_to_item(lead + v.messages.length - 1);
   }
 
   names() {
@@ -647,47 +809,16 @@ export default class Slack extends View {
               : null;
           raw = mergeMessages(v.raw, r.messages ?? []);
           added = raw.length - v.raw.length;
-        } else if (v.mode === "thread") {
-          let all = [],
-            cursor = null;
-          for (let page = 0; page < 5; page++) {
-            const r = await this.call("conversations.replies", {
-              channel: v.ch,
-              ts: v.thread,
-              limit: 200,
-              ...(cursor ? { cursor } : {}),
-            });
-            all = all.concat(r.messages ?? []);
-            cursor = r.has_more
-              ? r.response_metadata?.next_cursor || null
-              : null;
-            if (!cursor) break;
-          }
-          raw = mergeMessages([], all);
-        } else {
-          const before = await this.call("conversations.history", {
-            channel: v.ch,
-            latest: v.anchor,
-            inclusive: true,
-            limit: 15,
-          });
-          const after = await this.call("conversations.history", {
-            channel: v.ch,
-            oldest: v.anchor,
-            limit: 100,
-          });
-          raw = around(before.messages ?? [], after.messages ?? []);
-        }
+        } else if (v.mode === "thread")
+          raw = mergeMessages(
+            v.posted ?? [],
+            await this.thread(v.ch, v.thread),
+          );
+        else raw = await this.around(v.ch, v.anchor);
         await this.resolvePeople(userIds(raw), 30);
         await this.resolveChannels(channelRefs(raw));
-        const { names, images } = this.names();
         const grew = raw.length !== v.raw.length;
-        v.raw = raw;
-        v.messages = collapse(
-          raw.map((m) =>
-            toMessage(m, { names, images, me: shared("slack.me") ?? null }),
-          ),
-        );
+        this.show(v, raw);
         v.error = null;
         await this.viewImages();
         // Child 0 is "Load older" when there is more history.
@@ -704,8 +835,7 @@ export default class Slack extends View {
                 v.messages.findIndex((m) => m.ts === v.anchor),
               ),
           );
-        else if ((first || (grew && this.stick)) && v.messages.length)
-          this.viewScroll.scroll_to_item(lead + v.messages.length - 1);
+        else if (first || (grew && this.stick)) this.bottom(v);
       } catch (e) {
         v.error =
           e.detail === "missing_scope"
@@ -727,6 +857,60 @@ export default class Slack extends View {
       }
     });
     cx.notify();
+  }
+
+  // A thread, up to 5 pages of 200 (conversations.replies).
+  async thread(ch, ts) {
+    let all = [],
+      cursor = null;
+    for (let page = 0; page < 5; page++) {
+      const r = await this.call("conversations.replies", {
+        channel: ch,
+        ts,
+        limit: 200,
+        ...(cursor ? { cursor } : {}),
+      });
+      all = all.concat(r.messages ?? []);
+      cursor = r.has_more ? r.response_metadata?.next_cursor || null : null;
+      if (!cursor) break;
+    }
+    return mergeMessages([], all);
+  }
+
+  // A message in context: the 15 messages up to it and the 10 after it.
+  async around(ch, ts) {
+    const before = await this.call("conversations.history", {
+      channel: ch,
+      latest: ts,
+      inclusive: true,
+      limit: 15,
+    });
+    const after = await this.call("conversations.history", {
+      channel: ch,
+      oldest: ts,
+      limit: 100,
+    });
+    return around(before.messages ?? [], after.messages ?? []);
+  }
+
+  // The conversation as text for an agent without Slack tools, fetched as the view
+  // does: the thread, else the messages around the item. Never the token.
+  async context(item) {
+    try {
+      await this.ensureToken();
+      const raw = item.thread
+        ? await this.thread(item.ch, item.thread)
+        : await this.around(item.ch, item.ts);
+      await this.resolvePeople(userIds(raw), 30);
+      return contextText(raw, {
+        names: this.names().names,
+        base: item.link,
+        ch: item.ch,
+        thread: item.thread,
+      });
+    } catch (e) {
+      return `(The conversation could not be loaded: ${e.detail ?? e.kind ?? e}. Only the preview above is known.)`;
+    }
   }
 
   // The view's pictures. Avatars the list already cached are used from there; the rest,
@@ -795,6 +979,31 @@ export default class Slack extends View {
       setShared("slack.filters", next);
   }
 
+  agentSettings() {
+    return { ...AGENT, ...(shared("slack.agent") ?? {}) };
+  }
+
+  // A new agent starts with its default model: Claude's, else the agent's own.
+  pickAgent(key, cx) {
+    const model = key === AGENT.agent ? AGENT.model : "";
+    this.model.set_value(model);
+    this.modelError = null;
+    setShared("slack.agent", { agent: key, model });
+    cx.notify();
+  }
+
+  // An invalid model is not saved; the field says why.
+  saveModel(cx) {
+    const now = this.agentSettings(),
+      model = this.model.value().trim();
+    this.modelError = validModel(model)
+      ? null
+      : 'Letters, digits, ".", "-", "_" and "/" only. Not saved.';
+    if (!this.modelError && model !== now.model)
+      setShared("slack.agent", { agent: now.agent, model });
+    cx.notify();
+  }
+
   // Hides a row's items here and in the badge, and marks them seen. Slack is not changed.
   dismiss(row) {
     const ids = row.items.map((i) => i.id);
@@ -827,6 +1036,9 @@ export default class Slack extends View {
         exec,
         notify,
         markSeen: (id) => this.markSeen(id),
+        settings: shared("slack.agent"),
+        agents: this.agents,
+        context: (i) => this.context(i),
       });
       this.sending = null;
       cx.notify();
@@ -1254,6 +1466,7 @@ export default class Slack extends View {
                   "Include: channels only; it never hides a DM. Exclude: a channel by name, a DM by the person's or bot's name, a group DM by its names (*notetaker*). Comma-separated; * is any run, ? one character. Exclude wins. Enter saves.",
                 ),
             )
+            .child(this.agentBox(t, field))
             .when(dismissed.size > 0, (el) =>
               el.child(
                 h_flex()
@@ -1396,6 +1609,123 @@ export default class Slack extends View {
       );
   }
 
+  // Send to agent settings: the installed agents as chips, then the model field with
+  // suggestions. An agent without a known model flag gets no model.
+  agentBox(t, field) {
+    const s = this.agentSettings(),
+      installed = this.agents.filter((a) => a.installed),
+      list = installed.length
+        ? installed
+        : [{ key: "claude", name: "Claude Code", icon: null }],
+      flag = modelFlag(s.agent);
+    const chip = (id, label, on, fn, icon = null) =>
+      h_flex()
+        .id(id)
+        .h(24)
+        .px(8)
+        .gap(5)
+        .items_center()
+        .rounded(6)
+        .border_1()
+        .border_color(on ? t.accent : t.border)
+        .bg(on ? t.selected : t.background)
+        .text_size(11.5)
+        .text_color(on ? t.foreground : t.muted)
+        .cursor_pointer()
+        .hover((st) => st.bg(t.hover))
+        .on_click((_e, cx) => fn(cx))
+        .when(Boolean(icon), (el) => el.child(icon))
+        .child(label);
+    const icon = (a) =>
+      !a.icon
+        ? null
+        : a.tint
+          ? svg(a.icon).size(12).text_color(t.foreground)
+          : image(a.icon).size(12);
+    return v_flex()
+      .gap(6)
+      .pt(4)
+      .border_t(1)
+      .border_color(t.border)
+      .child(
+        div().pt(6).text_size(11).text_color(t.muted).child("Send to agent"),
+      )
+      .child(
+        h_flex()
+          .flex_wrap()
+          .gap(4)
+          .children(
+            list.map((a) =>
+              chip(
+                `agent-${a.key}`,
+                a.name,
+                a.key === s.agent,
+                (cx) => this.pickAgent(a.key, cx),
+                icon(a),
+              ),
+            ),
+          ),
+      )
+      .when(!list.some((a) => a.key === s.agent), (el) =>
+        el.child(
+          div()
+            .text_size(11)
+            .text_color(t.blocked)
+            .child(`"${s.agent}" is not installed. Pick another agent.`),
+        ),
+      )
+      .child(
+        flag
+          ? field("slack-model", "Model", this.model)
+          : v_flex()
+              .gap(4)
+              .child(div().text_size(11).text_color(t.muted).child("Model"))
+              .child(
+                div()
+                  .h(28)
+                  .px(8)
+                  .flex()
+                  .items_center()
+                  .rounded(7)
+                  .border_1()
+                  .border_color(t.border)
+                  .text_size(12)
+                  .text_color(t.dim)
+                  .child("model not supported for this agent"),
+              ),
+      )
+      .when(Boolean(flag && this.modelError), (el) =>
+        el.child(
+          div().text_size(11).text_color(t.blocked).child(this.modelError),
+        ),
+      )
+      .when(Boolean(flag && MODELS[s.agent]), (el) =>
+        el.child(
+          h_flex()
+            .flex_wrap()
+            .gap(4)
+            .children(
+              MODELS[s.agent].map((m) =>
+                chip(`model-${m}`, m, m === s.model, (cx) => {
+                  this.model.set_value(m);
+                  this.saveModel(cx);
+                }),
+              ),
+            ),
+        ),
+      )
+      .child(
+        div()
+          .text_size(11)
+          .text_color(t.dim)
+          .child(
+            flag
+              ? "Empty: the agent's own default. Enter saves. Claude reads Slack itself; other agents get the conversation in the task."
+              : "Other agents get the conversation in the task.",
+          ),
+      );
+  }
+
   // One message: avatar and name unless it continues the same sender's run, full text,
   // image thumbnails, other files as chips, and "N replies" outside a thread view.
   message(m, v, t, now) {
@@ -1473,15 +1803,18 @@ export default class Slack extends View {
                 ),
             ),
           )
-          .when(Boolean(m.text), (el) =>
-            el.children(
-              m.text.split("\n").map((line) =>
-                div()
-                  .text_size(12.5)
-                  .line_height("18px")
-                  .text_color(t.foreground)
-                  .child(this.rich(line || " ", t)),
-              ),
+          // Slack mrkdwn as CommonMark. Links open only on http(s) and mailto. The
+          // default UI font has no bold or italic face; the system font has both.
+          .when(Boolean(m.md), (el) =>
+            el.child(
+              TextView.markdown(`md-${m.ts}`, m.md)
+                .font_family(".SystemUIFont")
+                .selectable(true)
+                .text_size(12.5)
+                .text_color(t.foreground)
+                .on_link_click((url) => {
+                  if (linkable(url)) exec("open", [url]).catch(() => null);
+                }),
             ),
           )
           // Slack files' thumbnails, then public media such as GIPHY GIFs.
@@ -1618,6 +1951,7 @@ export default class Slack extends View {
         })
         .child(glyph);
     const more = v.mode === "history" && v.cursor;
+    const reply = this.replies.get(replyTarget(v).key);
     const note =
       v.error ??
       (v.loading && !v.messages.length
@@ -1625,125 +1959,213 @@ export default class Slack extends View {
         : !v.messages.length
           ? "No messages."
           : null);
-    return v_flex()
-      .id("slack")
-      .size_full()
-      .min_h(0)
-      .rounded(10)
-      .overflow_hidden()
-      .bg(t.background)
-      .border_1()
-      .border_color(t.border)
-      .text_color(t.foreground)
-      .text_size(13)
-      .track_focus(this.handle)
-      .on_key_down((e, cx) => {
-        if (e.key === "escape") {
+    return (
+      v_flex()
+        .id("slack")
+        .size_full()
+        .min_h(0)
+        .rounded(10)
+        .overflow_hidden()
+        .bg(t.background)
+        .border_1()
+        .border_color(t.border)
+        .text_color(t.foreground)
+        .text_size(13)
+        .track_focus(this.handle)
+        // Esc leaves the view; with text in the composer, the first Esc only blurs it.
+        .on_key_down((e, cx) => {
+          if (e.key !== "escape") return;
           cx.stop_propagation();
-          this.back(cx);
-        }
-      })
-      .child(
-        h_flex()
-          .h(42)
-          .flex_none()
-          .px(8)
-          .gap(6)
-          .items_center()
-          .border_b(1)
-          .border_color(t.border)
-          .child(
-            icon(
-              "view-back",
-              svg("mods/workspace-chrome/chevron-left.svg").size(16),
-              "Back (Esc)",
-              true,
-              (cx) => this.back(cx),
+          if (this.typing && reply?.state.value().trim()) {
+            this.handle.focus();
+            this.typing = false;
+            cx.notify();
+          } else this.back(cx);
+        })
+        .child(
+          h_flex()
+            .h(42)
+            .flex_none()
+            .px(8)
+            .gap(6)
+            .items_center()
+            .border_b(1)
+            .border_color(t.border)
+            .child(
+              icon(
+                "view-back",
+                svg("mods/workspace-chrome/chevron-left.svg").size(16),
+                "Back (Esc)",
+                true,
+                (cx) => this.back(cx),
+              ),
+            )
+            .when(row?.kind === "group" && item?.others?.length > 0, (el) =>
+              el.child(this.avatarStack(item, t, "view")),
+            )
+            .child(
+              div().flex_1().min_w(0).truncate().font_semibold().child(v.title),
+            )
+            .when(v.loading, (el) =>
+              el.child(
+                svg("mods/workspace-chrome/spinner.svg")
+                  .size(12)
+                  .flex_none()
+                  .text_color(t.dim)
+                  .spin(900),
+              ),
+            )
+            .child(
+              icon(
+                "view-open",
+                svg("mods/slack/open.svg").size(14),
+                "Open in Slack",
+                Boolean(link),
+                () => exec("open", [link]).catch(() => null),
+              ),
+            )
+            .child(
+              icon(
+                "view-send",
+                sending
+                  ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900)
+                  : svg("mods/slack/send.svg").size(14),
+                sending ? "Sending…" : "Send to agent",
+                Boolean(item) && !this.sending,
+                (cx) => this.send(item, cx),
+              ),
             ),
-          )
-          .when(row?.kind === "group" && item?.others?.length > 0, (el) =>
-            el.child(this.avatarStack(item, t, "view")),
-          )
-          .child(
-            div().flex_1().min_w(0).truncate().font_semibold().child(v.title),
-          )
-          .when(v.loading, (el) =>
-            el.child(
-              svg("mods/workspace-chrome/spinner.svg")
-                .size(12)
-                .flex_none()
-                .text_color(t.dim)
-                .spin(900),
-            ),
-          )
-          .child(
-            icon(
-              "view-open",
-              svg("mods/slack/open.svg").size(14),
-              "Open in Slack",
-              Boolean(link),
-              () => exec("open", [link]).catch(() => null),
-            ),
-          )
-          .child(
-            icon(
-              "view-send",
-              sending
-                ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900)
-                : svg("mods/slack/send.svg").size(14),
-              sending ? "Sending…" : "Send to agent",
-              Boolean(item) && !this.sending,
-              (cx) => this.send(item, cx),
-            ),
-          ),
+        )
+        .child(
+          div()
+            .flex_1()
+            .min_h(0)
+            .relative()
+            .child(
+              v_flex()
+                .id("slack-view")
+                .absolute()
+                .inset_0()
+                .overflow_y_scroll()
+                .track_scroll(this.viewScroll)
+                .pb(10)
+                // Scrolling up leaves the bottom: a refresh then keeps the position.
+                .on_scroll_wheel((e) => {
+                  if (e.delta.y > 0) this.stick = false;
+                })
+                .when(Boolean(more), (el) =>
+                  el.child(
+                    div()
+                      .id("view-older")
+                      .flex_none()
+                      .mx(12)
+                      .my(8)
+                      .h(26)
+                      .flex()
+                      .items_center()
+                      .justify_center()
+                      .rounded(6)
+                      .border_1()
+                      .border_color(t.border)
+                      .text_size(11.5)
+                      .text_color(t.muted)
+                      .cursor_pointer()
+                      .hover((s) => s.bg(t.hover))
+                      .on_click((_e, cx) => this.loadView(cx, { older: true }))
+                      .child(v.loading ? "Loading…" : "Load older"),
+                  ),
+                )
+                .children(v.messages.map((m) => this.message(m, v, t, now)))
+                .when(Boolean(note), (el) =>
+                  el.child(
+                    div().p(14).text_size(12).text_color(t.dim).child(note),
+                  ),
+                ),
+            )
+            .child(Scrollbar.vertical("slack-view").absolute().inset_0()),
+        )
+        .when(Boolean(reply), (el) => el.child(this.replyBox(reply, t)))
+    );
+  }
+
+  // The composer, Slack-style: the error line, then the input and Send.
+  replyBox(r, t) {
+    const busy = this.posting === r.target.key,
+      can = !this.posting && !r.empty;
+    return v_flex()
+      .flex_none()
+      .px(10)
+      .pt(4)
+      .pb(10)
+      .gap(4)
+      .when(Boolean(r.error), (el) =>
+        el.child(
+          div()
+            .id("reply-error")
+            .px(2)
+            .truncate()
+            .text_size(11)
+            .text_color(t.blocked)
+            .tooltip(r.error)
+            .child(r.error),
+        ),
       )
       .child(
-        div()
-          .flex_1()
-          .min_h(0)
-          .relative()
+        h_flex()
+          .id("reply-box")
+          .key_context("SlackReply")
+          .on_action("slack-reply-send", (_e, cx) => this.sendReply(r, cx))
+          .on_action("slack-reply-line", () => r.state.replace("\n"))
+          .items_end()
+          .gap(6)
+          .pl(10)
+          .pr(5)
+          .py(5)
+          .rounded(8)
+          .border_1()
+          .border_color(this.typing ? t.accent : t.border)
+          .bg(t.background)
+          .cursor_text()
+          .on_click(() => r.state.focus())
           .child(
-            v_flex()
-              .id("slack-view")
-              .absolute()
-              .inset_0()
-              .overflow_y_scroll()
-              .track_scroll(this.viewScroll)
-              .pb(10)
-              // Scrolling up leaves the bottom: a refresh then keeps the position.
-              .on_scroll_wheel((e) => {
-                if (e.delta.y > 0) this.stick = false;
-              })
-              .when(Boolean(more), (el) =>
-                el.child(
-                  div()
-                    .id("view-older")
-                    .flex_none()
-                    .mx(12)
-                    .my(8)
-                    .h(26)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(6)
-                    .border_1()
-                    .border_color(t.border)
-                    .text_size(11.5)
-                    .text_color(t.muted)
-                    .cursor_pointer()
-                    .hover((s) => s.bg(t.hover))
-                    .on_click((_e, cx) => this.loadView(cx, { older: true }))
-                    .child(v.loading ? "Loading…" : "Load older"),
-                ),
-              )
-              .children(v.messages.map((m) => this.message(m, v, t, now)))
-              .when(Boolean(note), (el) =>
-                el.child(
-                  div().p(14).text_size(12).text_color(t.dim).child(note),
-                ),
+            div()
+              .flex_1()
+              .min_w(0)
+              .py(3)
+              .child(
+                Textarea.new(r.state)
+                  .w_full()
+                  .text_size(12.5)
+                  .text_color(t.foreground),
               ),
           )
-          .child(Scrollbar.vertical("slack-view").absolute().inset_0()),
+          .child(
+            h_flex()
+              .id("reply-send")
+              .h(26)
+              .px(10)
+              .flex_none()
+              .items_center()
+              .rounded(6)
+              .text_size(12)
+              .bg(can ? t.accent : t.raised)
+              .text_color(can ? t.accent_foreground : t.dim)
+              .tooltip(
+                busy ? "Sending…" : "Send (Enter). Shift+Enter: new line",
+              )
+              .when(can, (el) =>
+                el.cursor_pointer().hover((s) => s.opacity(0.88)),
+              )
+              .on_click((_e, cx) => {
+                cx.stop_propagation();
+                if (can) this.sendReply(r, cx);
+              })
+              .child(
+                busy
+                  ? svg("mods/workspace-chrome/spinner.svg").size(14).spin(900)
+                  : "Send",
+              ),
+          ),
       );
   }
 
