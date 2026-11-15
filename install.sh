@@ -13,7 +13,7 @@ cp -R "$here/mods/usage-meter" "$here/mods/slack" "$app/mods/"
 # Build the layout aside; a missing id or a failed check leaves the old one in place.
 tmp=$(mktemp "$cache/main-slack.json.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
-jq -f "$here/layout/main-slack.jq" "$app/layouts/main.json" > "$tmp"
+jq -f "$here/layout/main-slack.jq" "$app/layouts/main.json" >"$tmp"
 
 herdr-app check "$app/mods/usage-meter"
 herdr-app check "$app/mods/slack"

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="herdr-slack">
+  <!-- The hash of the Slack button above a bar of the usage meter. -->
+  <rect width="96" height="96" rx="20" fill="#191C26" />
+  <path d="M28 34h42M24 52h42M44 17l-7 52M61 17l-7 52" fill="none" stroke="#D8DEE9" stroke-width="7" stroke-linecap="round" />
+  <rect x="22" y="76" width="52" height="7" rx="3.5" fill="#2E3440" />
+  <rect x="22" y="76" width="34" height="7" rx="3.5" fill="#88C0D0" />
+</svg>
