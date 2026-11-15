@@ -1,0 +1,23 @@
+#!/bin/sh
+# Formats the staged files with scripts/format.sh and stages the result.
+# Enable once per clone: git config core.hooksPath .githooks
+set -eu
+IFS='
+'
+set -f
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -n "$staged" ] || exit 0
+files=$(scripts/format.sh --list $staged)
+[ -n "$files" ] || exit 0
+
+partial=$(git diff --name-only -- $files)
+if [ -n "$partial" ]; then
+  echo "pre-commit: these staged files also have unstaged changes:" >&2
+  echo "$partial" | sed 's/^/  /' >&2
+  echo "pre-commit: formatting would stage those changes too. Stage or stash them, then commit again." >&2
+  exit 1
+fi
+
+scripts/format.sh $files
+git add -- $files

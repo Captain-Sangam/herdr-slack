@@ -3,12 +3,14 @@
 
 export const MINUTE = 60000;
 export const HOUR = 60 * MINUTE;
-export const STALE = HOUR;            // decision 14: dim and show age after this
+export const STALE = HOUR; // decision 14: dim and show age after this
 export const PROBE_EVERY = 30 * MINUTE; // decision 12: one probe per 30 min
-export const IDLE_MAX = 600;          // seconds: "the Mac was used in the last 10 min"
+export const IDLE_MAX = 600; // seconds: "the Mac was used in the last 10 min"
 
 const win = (pct, reset, minutes = null) =>
-  pct == null || !Number.isFinite(Number(pct)) ? null : { pct: Number(pct), reset: Number(reset) || null, minutes };
+  pct == null || !Number.isFinite(Number(pct))
+    ? null
+    : { pct: Number(pct), reset: Number(reset) || null, minutes };
 
 // statusline.sh writes {"at": <unix s>, "rate_limits": {five_hour, seven_day}}.
 // A torn or partial read returns null; the caller keeps its last good value.
@@ -32,15 +34,30 @@ export function parseCodex(text) {
   let best = null;
   for (const line of String(text ?? "").split("\n")) {
     let j;
-    try { j = JSON.parse(line); } catch { continue; }
-    const rl = j?.payload?.type === "token_count" ? j.payload.rate_limits : null;
+    try {
+      j = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const rl =
+      j?.payload?.type === "token_count" ? j.payload.rate_limits : null;
     if (!rl?.primary) continue;
     const at = Date.parse(j.timestamp) || 0;
     if (best && at <= best.at) continue;
     best = {
       at,
-      primary: win(rl.primary.used_percent, rl.primary.resets_at, rl.primary.window_minutes ?? null),
-      secondary: rl.secondary ? win(rl.secondary.used_percent, rl.secondary.resets_at, rl.secondary.window_minutes ?? null) : null,
+      primary: win(
+        rl.primary.used_percent,
+        rl.primary.resets_at,
+        rl.primary.window_minutes ?? null,
+      ),
+      secondary: rl.secondary
+        ? win(
+            rl.secondary.used_percent,
+            rl.secondary.resets_at,
+            rl.secondary.window_minutes ?? null,
+          )
+        : null,
     };
   }
   return best;
@@ -48,13 +65,20 @@ export function parseCodex(text) {
 
 // "5h" for 300 minutes, "7d" for 10080.
 export const windowName = (minutes) =>
-  !minutes ? "?" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+  !minutes
+    ? "?"
+    : minutes % 1440 === 0
+      ? `${minutes / 1440}d`
+      : minutes % 60 === 0
+        ? `${minutes / 60}h`
+        : `${minutes}m`;
 
 // Seconds as the status line writes them: 12m, 4h30m, 5d7h.
 export function span(seconds) {
   const s = Math.max(0, Math.floor(seconds));
   if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
+  if (s < 86400)
+    return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
   return `${Math.floor(s / 86400)}d${Math.floor((s % 86400) / 3600)}h`;
 }
 
@@ -64,8 +88,14 @@ export function cell(w, at, now) {
   const stale = at == null || now - at > STALE;
   const age = at == null ? null : stale ? span((now - at) / 1000) : null;
   if (!w) return { pct: "–", reset: "–", stale, age };
-  if (w.reset && w.reset * 1000 <= now) return { pct: "", reset: "reset", stale, age };
-  return { pct: `${Math.round(w.pct)}%`, reset: w.reset ? span(w.reset - now / 1000) : "–", stale, age };
+  if (w.reset && w.reset * 1000 <= now)
+    return { pct: "", reset: "reset", stale, age };
+  return {
+    pct: `${Math.round(w.pct)}%`,
+    reset: w.reset ? span(w.reset - now / 1000) : "–",
+    stale,
+    age,
+  };
 }
 
 // HIDIdleTime is nanoseconds since the last keyboard or mouse input.
@@ -80,5 +110,8 @@ export function probeDue({ at, idle, last, now, manual = false }) {
   const wait = last ? last + PROBE_EVERY - now : 0;
   if (wait > 0) return { probe: false, wait };
   if (manual) return { probe: true, wait: 0 };
-  return { probe: (at == null || now - at > STALE) && idle != null && idle < IDLE_MAX, wait: 0 };
+  return {
+    probe: (at == null || now - at > STALE) && idle != null && idle < IDLE_MAX,
+    wait: 0,
+  };
 }

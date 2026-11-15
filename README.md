@@ -1,143 +1,88 @@
+<p align="center"><img src="docs/assets/logo.svg" width="96" height="96" alt="herdr-slack logo"></p>
+
 # herdr-slack
 
-Two mods for [Herdr.app](https://herdr.dev): a Claude/Codex usage meter and a Slack panel.
+herdr-slack adds two mods to Herdr.app on macOS. One is a usage meter for Claude and Codex. The other is a read-only Slack panel for your DMs and mentions. One click sends a Slack message to a Claude Code agent.
 
-## What it is
+herdr-slack is an independent project. It is not made by, or affiliated with, the makers of Herdr or Slack.
 
-- **Usage meter** (`mods/usage-meter`): Claude 5-hour and 7-day use and Codex use, each as
-  percent used and time to reset, at the bottom of the sidebar above Settings.
-  - Claude numbers come from Claude Code's status line (see below).
-  - When they are more than an hour old and you are at the Mac, or when you click the
-    meter, it starts a hidden one-word Claude Haiku session to refresh them, at most once
-    every 30 minutes.
+## Screens
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/assets/screens/panel.png" width="260" alt="Slack panel with DMs, a thread, a group DM and mentions"><br>Slack panel</td>
+    <td align="center"><img src="docs/assets/screens/conversation.png" width="260" alt="Thread view with reactions, an image and a file"><br>Conversation view</td>
+    <td align="center"><img src="docs/assets/screens/filters.png" width="260" alt="Include and exclude filters above the list"><br>Filters</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/assets/screens/usage-meter.png" width="260" alt="Usage meter with Claude 5h, Claude 7d and Codex 7d"><br>Usage meter</td>
+    <td align="center"><img src="docs/assets/screens/button.png" width="104" alt="Slack button with an unread count"><br>Slack button</td>
+    <td></td>
+  </tr>
+</table>
+
+The screens show invented people, channels and numbers. They come from the real mods, fed with test data ([testing](docs/testing.md#6-screenshots-for-the-docs)).
+
+## Features
+
+- **Usage meter** (`mods/usage-meter`), above Settings in the sidebar:
+  - Claude 5-hour and 7-day use and Codex use, each as percent used and time to reset.
+  - Claude numbers come from Claude Code's status line.
+  - When the Claude numbers are more than an hour old and you use the Mac, a hidden one-word Claude Haiku session refreshes them. A click on the meter does the same. There is at most one refresh in 30 min.
   - Codex numbers come from Codex's own session logs.
-- **Slack panel** (`mods/slack`): a Slack button right of Files and Changes, with an unread
-  badge, and a panel listing your DMs, group DMs and @-mentions, grouped by conversation and
-  thread.
-  - Click a row to read the conversation in the panel (read-only).
-  - **Send to agent** opens Claude in a Herdr space named `space` at `~/code` and asks it
-    to read the thread with its own Slack tools. The space, folder and the agent's command
-    (`ARGV`, default model `claude-opus-5-5`) are set in `mods/slack/lib.js`.
-  - Nothing in Slack is changed: no replies, reactions or read marks.
-- `layout/main-slack.jq` builds a `main-slack` layout from Herdr's own `main.json`, so no
-  shipped layout or mod is cloned and Herdr's updates keep coming.
+- **Slack button** (`mods/slack`), right of Files and Changes in the tab bar, with an unread count. It opens and closes the Slack panel.
+- **Slack panel**, in the right-hand panel stack:
+  - Your DMs, group DMs and mentions, one row for each conversation or thread, with photos and unread counts.
+  - Tabs for All, Mentions and DMs, and an Unread toggle.
+  - Include and exclude filters with `*` and `?` patterns.
+  - A read-only conversation view: DM history, threads, and the messages around a mention, with images, files and reactions.
+  - Open in Slack, Dismiss, and **Send to agent**. Send to agent opens Claude Code in a Herdr space. Claude reads the thread with its own Slack tools. The space (`space`), the folder (`~/code`) and the agent command (`ARGV`) are constants in `mods/slack/lib.js`.
+- **Read-only:** nothing in Slack changes. No replies, no reactions and no read marks.
+- **No cloned Herdr files:** `install.sh` builds a `main-slack` layout from Herdr's own `main.json`, so Herdr's updates keep coming.
 
-Requirements:
-- macOS: the token lives in the Keychain, and idle time comes from `ioreg`.
-- Herdr.app with `herdr-app` and `hc` on `PATH`.
+## Requirements
+
+- macOS.
+- Herdr.app, with `herdr-app` and `hc` on the `PATH`.
 - Claude Code, for the usage meter and Send to agent.
 - Codex (optional), for its usage row.
 - `jq` and `curl`.
+- A Slack workspace that lets you install an app with user scopes.
 - Node 20 or later, only to run the tests.
 
-## Install
+## Quick start
 
-```sh
-./install.sh
-```
-
-It copies both mods to `~/.config/herdr-app/mods/`, builds `main-slack.json` from the
-current `main.json`, checks both mods and switches the window to `main-slack`. It is safe
-to rerun. Rerun it after a Herdr update that changes `main.json`. If `main.json` no longer
-has the ids the patch needs, or a check fails, the old `main-slack.json` stays.
-
-Tests: `node --test test/*.test.mjs` (or `npm test`).
-
-## Slack app setup
-
-1. Go to api.slack.com/apps, then Create New App, then From a manifest. Choose your
-   workspace, paste `slack-app-manifest.yaml`, then Create.
-2. Install to Workspace. Ask an admin to approve it if Slack asks for that.
-3. On OAuth & Permissions, copy the User OAuth Token (`xoxp-…`).
-4. Store it in the Keychain. Keep `-w` last so that `security` prompts for the token;
-   paste it there. It never goes in argv or shell history:
+1. Create the Slack app from `slack-app-manifest.yaml` and copy its User OAuth Token ([deployment, step 2](docs/deployment.md#2-create-the-slack-app)).
+2. Store the token in the Keychain. Keep `-w` last, so that `security` prompts for the token:
 
    ```sh
    security add-generic-password -s herdr-slack -a "$USER" -U -w
    ```
 
-5. Check it. The token goes to `curl` on stdin:
+3. Add the status-line snippet for the Claude rows ([deployment, step 4](docs/deployment.md#4-add-the-status-line-snippet)).
+4. Install the mods and the layout:
 
    ```sh
-   security find-generic-password -s herdr-slack -w \
-     | sed 's/.*/header = "Authorization: Bearer &"/' \
-     | curl -s -K - https://slack.com/api/auth.test | jq '{ok, user_id}'
+   ./install.sh
    ```
 
-   It prints `"ok": true` and your own `user_id`.
-6. To revoke: delete the app on api.slack.com/apps, then
-   `security delete-generic-password -s herdr-slack`.
+5. Make sure that `herdr-app status` shows `"layout": "main-slack"` and `"errors": []`.
 
-The panel reads the token from the Keychain (service `herdr-slack`) when it polls, keeps it
-in memory only, and sends it only in an `Authorization` header. It asks `auth.test` whose
-token it is, and searches for that user's mentions. Without the Keychain item the button
-shows "No token".
+Run `./install.sh` again after each Herdr update. To remove herdr-slack, see [uninstall](docs/deployment.md#7-uninstall).
 
-Images: profile pictures and GIPHY images are public and are downloaded without the token.
-Thumbnails of images shared in messages are private: they need the `files:read` scope, and
-their download reads the token from the Keychain and gives it to `curl` on stdin. All of
-them go into `~/.config/herdr-app/.slack-cache/`, and files that no item references any
-more are deleted on the next poll.
+## Security
 
-Clicking a row opens a read-only conversation view in the panel: a DM's or group DM's
-history (newest 50, with Load older), a thread, or the channel messages around a mention.
-It reads with `conversations.history` and `conversations.replies`, which need the
-`*:history` scopes. Without them, the view says "Needs history permission" and the list
-keeps working. The view's messages stay in the panel's memory.
+- The Slack token stays in the macOS Keychain and in memory. The mods send it only in an `Authorization` header or to `curl` on stdin.
+- The Slack app has read-only scopes and no bot user.
+- Send to agent gives Slack content to an agent that has tool access. A message can hold instructions for the agent. Send only messages that you trust, and keep approval prompts on.
 
-To add scopes to an app made from an older manifest: on api.slack.com/apps, open the app,
-then OAuth & Permissions, then User Token Scopes, and add the missing ones from the
-manifest. Click Reinstall to Workspace and allow it. If the User OAuth Token on that page
-changed, store it again with setup step 4 (`-U` replaces the old one) and check it with
-step 5.
+Details are in [`SECURITY.md`](SECURITY.md) and the [token and privacy model](docs/architecture.md#5-token-and-privacy-model).
 
-Filters (the gear in the panel): **Include** lists channel patterns and never hides a DM
-or group DM; empty means all channels. **Exclude** applies to everything: a channel by its
-name, a DM by the other person's or bot's display name, real name or handle, and a group
-DM by its name string (`*notetaker*` hides any group with a Notetaker bot). Patterns match
-the whole name, case-insensitive: `*` is any run, `?` is one character. Exclude wins.
+## More
 
-Unread state follows Slack's `last_read` from `conversations.info` for top-level messages
-and DMs. Thread replies stay unread until you open or send them from the panel.
+- [`docs/`](docs/README.md): the architecture, the decisions (ADRs), the interfaces, deployment, operations and testing.
+- [`AGENTS.md`](AGENTS.md): the commands and the rules for coding agents that change this repo.
 
-Emoji: Slack's `:short_name:` codes are shown as Unicode emoji. The map in
-`mods/slack/emoji.js` is generated from iamcal/emoji-data by `node scripts/gen-emoji.mjs`.
-Custom workspace emoji stay as dimmed `:name:` text.
+## License
 
-## Claude usage capture (status line)
-
-Claude Code gives its rate limits only to the status line command. The meter reads them
-from `~/.cache/herdr-slack/claude-usage.json`, which your status-line script writes as:
-
-```json
-{"at": <unix seconds>, "rate_limits": <the rate_limits object from the status line input>}
-```
-
-For a bash status-line script that reads its input with one `jq` call and sets
-`NOW=$(date +%s)`, add this field to the `jq` call:
-
-```bash
-  "RL="           + (.rate_limits | tojson | @sh)
-```
-
-and these lines after `NOW` is set:
-
-```bash
-# Usage cache for the Herdr usage meter — builtins only, no fork; a failed write is silent.
-[[ "$RL" == *five_hour* ]] && { printf '{"at":%s,"rate_limits":%s}\n' "$NOW" "$RL" > ~/.cache/herdr-slack/claude-usage.json; } 2>/dev/null
-```
-
-Both are shell builtins, so the script starts no extra process. The cache folder is made
-by `install.sh`. The write is not atomic; the meter keeps its last good value when it reads
-a partial file.
-
-## Uninstall
-
-1. `herdr-app do layout.switch --name main`
-2. `rm -rf ~/.config/herdr-app/mods/usage-meter ~/.config/herdr-app/mods/slack ~/.config/herdr-app/layouts/main-slack.json ~/.config/herdr-app/.slack-cache`
-3. Take the status-line additions out of your status-line script.
-4. `rm -rf ~/.cache/herdr-slack`
-5. Revoke the Slack app (setup step 6).
-6. The mod added `"slack"` to Herdr's shared `workspace.panels` list. With Herdr closed,
-   remove it: `jq '."workspace.panels" -= ["slack"]' ~/.config/herdr-app/shared.json`,
-   saved back to that file.
+[MIT](LICENSE). The emoji names in `mods/slack/emoji.js` come from iamcal/emoji-data (MIT).
