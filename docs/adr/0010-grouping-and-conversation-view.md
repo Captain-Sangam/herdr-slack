@@ -1,6 +1,6 @@
 # ADR 0010: Rows by conversation, and a conversation view in the panel
 
-- **Status:** Accepted, 2026-11-15. Replaces the first rule that the panel does not expand threads.
+- **Status:** Accepted, 2026-11-15. Replaces the first rule that the panel does not expand threads. [ADR 0011](0011-replies-from-the-conversation-view.md) adds a reply composer to the view.
 
 ## Context
 

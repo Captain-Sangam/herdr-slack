@@ -1,8 +1,9 @@
-# Slack app for the Herdr Slack panel: read-only user token, no bot user.
+# Slack app for the Herdr Slack panel: a user token, no bot user. Read scopes, and
+# chat:write for replies that you send from the panel's composer (ADR 0011).
 # api.slack.com/apps -> Create New App -> From a manifest.
 display_information:
   name: Herdr Slack helper
-  description: Read-only DMs and mentions for a personal Herdr.app panel.
+  description: DMs and mentions in a personal Herdr.app panel, with replies.
 oauth_config:
   scopes:
     user:
@@ -17,6 +18,7 @@ oauth_config:
       - groups:history
       - im:history
       - mpim:history
+      - chat:write
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false

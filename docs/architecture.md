@@ -24,15 +24,15 @@ flowchart LR
   U -->|"hc run probe"| HC[herdr-core]
 ```
 
-| Component                | Source                            | Runs as                                                  | Job                                                                                           |
-| ------------------------ | --------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `usage-meter` mod        | `mods/usage-meter/`               | Block `usage` above Settings in the sidebar              | Shows Claude 5h, Claude 7d and Codex use. Starts a Haiku probe when the Claude data is stale. |
-| `slack` mod, button copy | `mods/slack/`, `role: "button"`   | Block `slack-button` right of Files and Changes          | Polls Slack each minute, publishes the items, draws the button and the unread badge.          |
-| `slack` mod, panel copy  | `mods/slack/`, `role: "panel"`    | Block `slack` in the right-hand panel stack `panel-body` | Draws the list, the filters and the conversation view. Runs Send to agent.                    |
-| Layout patch             | `layout/main-slack.jq`            | `jq`, from `install.sh`                                  | Builds `main-slack.json` from Herdr's own `main.json`.                                        |
-| Installer                | `install.sh`                      | Shell, by hand                                           | Copies the mods, builds the layout, checks the mods and switches to `main-slack`.             |
-| Slack app manifest       | `slack-app-manifest.yaml`         | Pasted into api.slack.com                                | Makes a Slack app with read-only user scopes and no bot user.                                 |
-| Emoji map                | `mods/slack/emoji.js` (generated) | Built by `scripts/gen-emoji.mjs`                         | Maps Slack `:short_name:` codes to Unicode.                                                   |
+| Component                | Source                            | Runs as                                                  | Job                                                                                                     |
+| ------------------------ | --------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `usage-meter` mod        | `mods/usage-meter/`               | Block `usage` above Settings in the sidebar              | Shows Claude 5h, Claude 7d and Codex use. Starts a Haiku probe when the Claude data is stale.           |
+| `slack` mod, button copy | `mods/slack/`, `role: "button"`   | Block `slack-button` right of Files and Changes          | Polls Slack each minute, publishes the items, draws the button and the unread badge.                    |
+| `slack` mod, panel copy  | `mods/slack/`, `role: "panel"`    | Block `slack` in the right-hand panel stack `panel-body` | Draws the list, the filters, the conversation view and the composer. Posts replies. Runs Send to agent. |
+| Layout patch             | `layout/main-slack.jq`            | `jq`, from `install.sh`                                  | Builds `main-slack.json` from Herdr's own `main.json`.                                                  |
+| Installer                | `install.sh`                      | Shell, by hand                                           | Copies the mods, builds the layout, checks the mods and switches to `main-slack`.                       |
+| Slack app manifest       | `slack-app-manifest.yaml`         | Pasted into api.slack.com                                | Makes a Slack app with read user scopes, `chat:write` and no bot user.                                  |
+| Emoji map                | `mods/slack/emoji.js` (generated) | Built by `scripts/gen-emoji.mjs`                         | Maps Slack `:short_name:` codes to Unicode.                                                             |
 
 - Both copies of the `slack` mod run the same `main.js`. The `role` prop picks the job.
 - Pure logic is in `lib.js` in each mod. It imports nothing from Herdr, so `node --test` runs it ([testing](testing.md)).
@@ -94,6 +94,7 @@ Every copy of every mod can read these keys. Herdr keeps them in `~/.config/herd
 | `slack.seen`       | Panel copy            | Ids of items opened, sent or dismissed in the panel. Pruned to the listed items.              |
 | `slack.dismissed`  | Panel copy            | Ids of dismissed items. Pruned to the listed items.                                           |
 | `slack.filters`    | Panel copy            | `{include, exclude}` pattern lists.                                                           |
+| `slack.agent`      | Panel copy            | `{agent, model}` for Send to agent. `agent` is a `knownAgents()` key.                         |
 | `workspace.panels` | Herdr, plus `"slack"` | The panel ids that Herdr's `tabs` mod restores for each space.                                |
 
 ### 3.3 Storage for each copy
@@ -129,7 +130,7 @@ Herdr's `image()` reads only from the app home, and a file saved under `mods/` r
 
 ### 3.5 Unread state
 
-The panel never changes Slack: no replies, no reactions and no read marks ([ADR 0006](adr/0006-read-only-unread.md)).
+The panel never marks messages read and never adds reactions ([ADR 0006](adr/0006-read-only-unread.md)). Its only write is a reply that you send ([3.7](#37-replies)).
 
 - A DM message or a top-level channel message is read when its `ts` is at or before the conversation's `last_read` from `conversations.info`.
 - A thread reply does not move `last_read`. It stays unread until you open it, send it or dismiss it in the panel.
@@ -144,7 +145,7 @@ The list shows one row for each conversation or thread, as in Slack's activity v
 - A channel mention is one row for each thread. A mention outside a thread is its own row.
 - Tabs (All, Mentions, DMs) and the Unread toggle work on rows.
 
-A click on a row opens a read-only conversation view in the panel copy:
+A click on a row opens a conversation view in the panel copy:
 
 | Row kind                   | View                                                          | Slack method            |
 | -------------------------- | ------------------------------------------------------------- | ----------------------- |
@@ -153,31 +154,88 @@ A click on a row opens a read-only conversation view in the panel copy:
 | Channel mention, no thread | 15 messages up to the mention and 10 after it, mention marked | `conversations.history` |
 
 - "N replies" under a message opens that thread on top of the view. Back or Esc closes it.
+- The view shows Slack formatting. `mrkdwn()` in `lib.js` turns the message text into CommonMark, and `TextView.markdown` draws it:
+  - bold, italic, strike and code
+  - code blocks, quotes, and bullet and numbered lines
+  - links, which open with `open` on `http`, `https` and `mailto` only
+  - mentions, as links to the person or channel in Slack.
+- The list previews stay plain text. `plain()` removes the formatting marks.
+
+### 3.7 Replies
+
+The conversation view has a composer at the bottom ([ADR 0011](adr/0011-replies-from-the-conversation-view.md)). A reply posts in Slack as you.
+
+| View                             | Reply goes to                            | `thread_ts`                  | Placeholder                  |
+| -------------------------------- | ---------------------------------------- | ---------------------------- | ---------------------------- |
+| DM                               | The conversation                         | None                         | `Reply to Ann Lee`           |
+| Group DM                         | The conversation                         | None                         | `Message ann, bea, chen`     |
+| Thread                           | The thread                               | The root `ts`                | `Reply in thread`            |
+| Channel mention outside a thread | A new thread under the mentioned message | The mentioned message's `ts` | `Reply in thread to Bea Kim` |
+
+This diagram shows one reply.
+
+```mermaid
+sequenceDiagram
+  participant U as You
+  participant P as Panel copy
+  participant K as Keychain
+  participant S as Slack Web API
+  U->>P: Send, or Enter
+  P->>P: replyBody: trim, refuse empty
+  P->>K: token, if not in memory
+  P->>S: chat.postMessage, JSON body
+  S-->>P: ok and the message, or an error
+  P->>P: clear, show the message, mark seen
+  P->>S: load the view again
+```
+
+- `replyTarget()`, `replyBody()`, `postReply()` and `replyError()` in `lib.js` hold the logic. `postReply()` gets `fetch` as an argument, so the tests use a stub.
+- Enter sends and Shift+Enter adds a line. The panel binds both keys with `cx.bind_keys` in the key context `SlackReply > Input`, so they apply only in the composer.
+- Esc with an empty composer leaves the view. With text in the composer, the first Esc only takes the focus off the composer.
+- One post runs at a time. While it runs, Send and Enter do nothing.
+- A failed post keeps the text and shows one line over the composer. Nothing retries it.
+- A successful post clears the composer, adds the message to the view at once, marks the row seen and loads the view again. A reply under a mention outside a thread opens that thread.
+- Each target has its own composer and draft, in the panel copy's memory. A mention's view and its thread share one. Back releases a composer only when it is empty.
 - An open view loads again every 60 s.
 - The messages of the view stay in the panel copy's memory. They never go into `shared`.
 
-### 3.7 Send to agent
+### 3.8 Send to agent
 
-Send to agent hands one item to a new Claude Code session. The task tells Claude to read the conversation with its own Slack tools.
+Send to agent hands one item to a new agent session. The agent and the model come from the settings ([ADR 0012](adr/0012-agent-and-model-settings.md)).
+
+This diagram shows one send.
 
 ```mermaid
 sequenceDiagram
   participant P as Panel copy
+  participant S as Slack Web API
   participant H as herdr-app
-  participant C as Claude Code
+  participant A as Agent
+  P->>P: agentArgv from slack.agent
+  P->>S: thread or messages around, not for Claude
   P->>P: mkdir -p ~/code
   P->>H: tab.new in space "space", or space.new
-  H->>C: start claude with the task
+  H->>A: start the agent with the task
   H-->>P: result, or error and exit 1
   P->>P: mark seen on success, else toast
 ```
 
 - Only one send runs at a time.
-- The space name `space`, the folder `~/code` and `ARGV` are constants in `mods/slack/lib.js`.
-- The task holds the permalink, the channel id and name, `ts`, `thread_ts`, the sender and the preview. It never holds the token.
-- The task tells Claude to treat all fetched content as data, not instructions ([SECURITY.md](../SECURITY.md)).
+- The settings are in `shared("slack.agent")`, `{agent, model}`. The gear opens them, under the filters:
+  - the agent: a chip for each installed agent from `knownAgents()`, Claude by default
+  - the model: a text field with suggestions. Empty means the agent's own default.
+- `agentArgv()` builds the argv from the agent's own `run` argv and its model flag: `--model` for Claude, `-m` for Codex, none for other agents. It refuses an agent that is not installed and a model with other characters than letters, digits, `.`, `-`, `_` and `/`.
+- The space name `space` and the folder `~/code` are constants in `mods/slack/lib.js`. So are the defaults `AGENT` and the suggestions `MODELS`.
+- The task for Claude holds the permalink, the channel id and name, `ts`, `thread_ts`, the sender and the preview. Claude reads Slack with its own connector.
+- The task for another agent holds the same lines and the conversation itself:
+  - The panel fetches it as the view does: the thread, else the 15 messages up to the item and the 10 after it.
+  - `contextText()` writes each message as plain text: the sender, the time, the text with link URLs, the file names and the permalink.
+  - The text is at most about 20,000 characters. The newest messages stay, and a line tells how many older ones were cut.
+  - It sits between `BEGIN SLACK DATA` and `END SLACK DATA`. A line in the data that copies a marker becomes `END SLACK-DATA`.
+  - If the fetch fails, the data block says why, and the preview stays in the task.
+- The task never holds the token. It tells the agent to treat all Slack content as data, not instructions ([SECURITY.md](../SECURITY.md)).
 
-### 3.8 Errors
+### 3.9 Errors
 
 Every failure keeps the last items on screen. The status says why.
 
@@ -229,7 +287,7 @@ Display rules:
 
 ### 5.1 The token
 
-The Slack token is a user token with read-only scopes ([ADR 0005](adr/0005-token-in-keychain.md)).
+The Slack token is a user token with read scopes and `chat:write` ([ADR 0005](adr/0005-token-in-keychain.md), [ADR 0011](adr/0011-replies-from-the-conversation-view.md)). It can post as you. The mods post only on an explicit Send.
 
 - It lives in the macOS Keychain, as a generic password with service `herdr-slack`.
 - Each copy of the `slack` mod reads it with `security find-generic-password -s herdr-slack -w` and keeps it in instance memory only.
@@ -240,19 +298,19 @@ The Slack token is a user token with read-only scopes ([ADR 0005](adr/0005-token
 
 ### 5.2 Data on disk
 
-| Place                                    | Content                                                  | Lifetime                                   |
-| ---------------------------------------- | -------------------------------------------------------- | ------------------------------------------ |
-| `~/.config/herdr-app/shared.json`        | `slack.*` keys: item previews, names, permalinks, ids.   | Until the items leave the newest 150.      |
-| `~/.config/herdr-app/data/slack/`        | Names, avatar URLs, `last_read`, channel names, members. | Kept, and pruned for `lastRead`.           |
-| `~/.config/herdr-app/.slack-cache/`      | Avatars, message thumbnails and public media.            | Deleted when no item or open view uses it. |
-| `~/.cache/herdr-slack/claude-usage.json` | Claude usage percentages and reset times.                | Overwritten by each status-line draw.      |
-| Panel copy memory                        | Messages of the conversation view.                       | Until the view closes or Herdr quits.      |
+| Place                                    | Content                                                  | Lifetime                                                                             |
+| ---------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `~/.config/herdr-app/shared.json`        | `slack.*` keys: item previews, names, permalinks, ids.   | Until the items leave the newest 150.                                                |
+| `~/.config/herdr-app/data/slack/`        | Names, avatar URLs, `last_read`, channel names, members. | Kept, and pruned for `lastRead`.                                                     |
+| `~/.config/herdr-app/.slack-cache/`      | Avatars, message thumbnails and public media.            | Deleted when no item or open view uses it.                                           |
+| `~/.cache/herdr-slack/claude-usage.json` | Claude usage percentages and reset times.                | Overwritten by each status-line draw.                                                |
+| Panel copy memory                        | Messages of the conversation view, and reply drafts.     | Until the view closes or Herdr quits. A draft stays until it is sent or Herdr quits. |
 
 ### 5.3 What leaves the Mac
 
-- Calls to the Slack Web API, with the token.
+- Calls to the Slack Web API, with the token. A reply that you send goes to Slack as a post.
 - Downloads of avatars and public media from their own hosts, without the token.
-- Send to agent: the task text goes to Claude Code, which sends it to the model provider. Claude then reads Slack with its own connector.
+- Send to agent: the task text goes to the agent, which sends it to its model provider. Claude then reads Slack with its own connector. Another agent gets up to about 20,000 characters of the conversation in the task.
 - The usage probe: a one-word prompt to Claude Haiku.
 
 ### 5.4 Trust

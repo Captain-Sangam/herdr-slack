@@ -23,7 +23,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 | `ok`          | Unread count, or no badge    | Nothing to do.                                                                    |
 | `no-token`    | A dot in the `blocked` color | [No token](#2-no-token)                                                           |
 | `auth`        | A dot in the `blocked` color | [`missing_scope` and other token errors](#3-missing_scope-and-other-token-errors) |
-| `ratelimited` | A dim dot                    | [`ratelimited`](#4-ratelimited)                                                   |
+| `ratelimited` | A dim dot                    | [`ratelimited`](#6-ratelimited)                                                   |
 | `network`     | A dim dot                    | Check the network. The poller tries again each minute.                            |
 | `error`       | A dim dot                    | Read the message. It has Slack's error code.                                      |
 
@@ -61,8 +61,42 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
   - `*:history`: the conversation view says "Needs history permission". The list still works.
   - `files:read`: message thumbnails do not show. Slack sends HTML instead of an image, and the mod deletes it. There is no banner.
   - `search:read`: the poll fails with `missing_scope`.
+  - `chat:write`: a reply fails with "Needs the chat:write permission". The list and the view still work.
 
-## 4. `ratelimited`
+## 4. A reply does not send
+
+**Symptom:** a line over the composer says why. The text stays in the composer.
+
+| Line                                | Cause                                                    | Fix                                                                            |
+| ----------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Needs the chat:write permission     | `missing_scope`: the app does not have `chat:write`.     | Add `chat:write` and reinstall the app ([deployment](deployment.md#6-update)). |
+| You are not in this channel         | `not_in_channel`: you are not a member of the channel.   | Join the channel in Slack, then send again.                                    |
+| This channel is archived            | `is_archived`: the channel takes no new messages.        | Reply in Slack somewhere else.                                                 |
+| Slack cannot find this conversation | `channel_not_found`: you left it, or it was deleted.     | Open the conversation in Slack.                                                |
+| A workspace setting stops you       | `restricted_action`: an admin limits who can post there. | Ask a workspace admin.                                                         |
+| The message is too long             | `msg_too_long`: Slack's limit for one message.           | Make the text shorter, or send it in two parts.                                |
+| Slack rate limit                    | `ratelimited` or HTTP 429.                               | Wait a minute, then send again.                                                |
+| Cannot reach Slack                  | No connection. The post can still have arrived.          | Look in Slack first. Then send again only if the reply is not there.           |
+| Slack refused the token             | `invalid_auth`, `token_revoked` and others.              | See [token errors](#3-missing_scope-and-other-token-errors).                   |
+
+- Nothing retries a failed post. Send it again yourself.
+- If Enter adds a line instead of sending, click Send. Then report it: the Enter binding depends on Herdr's input key context ([interfaces](interfaces.md#11-mod-api)).
+
+## 5. Send to agent
+
+**Symptom:** an error toast "Send to agent failed". The item stays unread.
+
+| Toast                               | Cause                                                                        | Fix                                                                     |
+| ----------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| The agent "codex" is not installed. | The chosen agent is not in `knownAgents()` as installed.                     | Install the agent, or pick another one under the gear.                  |
+| The model "…" is not valid          | The model has a character other than letters, digits, `.`, `-`, `_` and `/`. | Fix the model under the gear. The field does not save an invalid value. |
+| `herdr-app` errors                  | `herdr-app do` failed, for example a missing folder.                         | Read the message. Run `herdr-app status`.                               |
+
+- To see the settings: `jq '."slack.agent"' ~/.config/herdr-app/shared.json`.
+- An agent other than Claude gets the conversation in the task. If the task says "The conversation could not be loaded", the fetch failed. The usual cause is a missing `*:history` scope.
+- To check what an agent gets, read the first message in its tab. It never holds the token.
+
+## 6. `ratelimited`
 
 **Symptom:** the status is `ratelimited`. The message tells when the next try is.
 
@@ -70,7 +104,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 - A poll makes 2 searches, and at most 40 lookups: 10 each for `last_read`, new people, group DM members and channel names.
 - A reload of the mod (for example `./install.sh`) also sets the wait back to zero. Do not reload in a loop to skip the wait.
 
-## 5. Stale usage and the probe
+## 7. Stale usage and the probe
 
 **Symptom:** a Claude row is dimmed, or shows a dash or `reset`.
 
@@ -100,7 +134,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 - If a manual probe fails, a toast shows the error. Make sure that `claude` starts in a new Herdr terminal.
 - For Codex, a dash means that no Codex session log of the last 8 days has a `token_count` event with `rate_limits`. Run one Codex turn.
 
-## 6. The image cache `.slack-cache`
+## 8. The image cache `.slack-cache`
 
 The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architecture.md#34-image-cache)).
 
@@ -124,7 +158,7 @@ The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architectu
   - Each poll downloads at most 10 files.
   - A thumbnail needs the `files:read` scope.
 
-## 7. Return to the `main` layout
+## 9. Return to the `main` layout
 
 - Show Herdr's own layout:
 
@@ -141,11 +175,13 @@ The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architectu
 - In the `main` layout, the meter, the Slack button and the panel do not run. `"slack"` stays in `workspace.panels`, which does no harm.
 - If `main-slack.json` is broken, run `./install.sh` to build it again.
 
-## 8. Known limits
+## 10. Known limits
 
 - Each search gets the newest 50 matches each minute. If more than 50 matches arrive in one minute, the panel misses some.
 - A thread reply stays unread until you open it in the panel, even if you read it in Slack.
-- Custom workspace emoji show as dim `:name:` text.
+- Custom workspace emoji show as `:name:` text. The list dims them. The conversation view does not.
+- A nested bullet under a numbered line shows as its own list.
 - A channel mention written as `<#C123>` shows its id if the token cannot see that channel.
 - For a mention outside a thread, the view can have a gap after it when more than 100 messages follow the mention.
+- Send to agent to an agent other than Claude carries at most about 20,000 characters of the conversation. Older messages are cut.
 - The emoji code can change text such as `aws:…:secret:…` that looks like `:secret:`.
