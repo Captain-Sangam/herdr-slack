@@ -14,7 +14,7 @@ herdr-slack is an independent project. It is not made by, or affiliated with, th
   <tr>
     <td align="center"><img src="docs/assets/screens/panel.png" width="260" alt="Slack panel with DMs, a thread, a group DM and mentions"><br>Slack panel</td>
     <td align="center"><img src="docs/assets/screens/conversation.png" width="260" alt="Thread view with Slack formatting, reactions, a file and the reply composer"><br>Conversation view</td>
-    <td align="center"><img src="docs/assets/screens/filters.png" width="260" alt="Include and exclude filters and the Send to agent settings above the list"><br>Filters and agent</td>
+    <td align="center"><img src="docs/assets/screens/filters.png" width="260" alt="Include and exclude filters and the Send to agent settings, with the space picker, above the list"><br>Filters and agent</td>
   </tr>
   <tr>
     <td align="center"><img src="docs/assets/screens/usage-meter.png" width="260" alt="Usage meter with Claude 5h, Claude 7d and Codex 7d"><br>Usage meter</td>
@@ -40,8 +40,8 @@ The screens show invented people, channels and numbers. They come from the real 
   - A conversation view: DM history, threads, and the messages around a mention, with images, files and reactions.
   - A reply composer at the bottom of the view. Enter sends, Shift+Enter adds a line. A reply goes to the DM, the group DM or the thread. For a channel mention outside a thread, it starts a thread under the mention.
   - Slack formatting in the view: bold, italic, strike, code, code blocks, quotes, lists, links and mentions. The list previews stay plain text.
-  - Open in Slack, Dismiss, and **Send to agent**. Send to agent opens an agent in the Herdr space `space` at `~/code`.
-  - Settings for Send to agent, under the gear: the agent (Claude by default, or another installed agent such as Codex) and the model (`claude-opus-5-5` by default, empty for the agent's own default).
+  - Open in Slack, Dismiss, and **Send to agent**. Send to agent opens an agent in a tab of the Herdr space that you set. The default is the space `space` at `~/code`.
+  - Settings for Send to agent, under the gear: the agent (Claude by default, or another installed agent such as Codex), the model (`claude-opus-5-5` by default, empty for the agent's own default) and the space (an open space, or a new one by name and folder). A renamed space stays the target.
   - Claude reads the thread with its own Slack tools. Another agent gets the conversation as text in its first message, marked as untrusted data.
 - **Posts only on Send:** a reply goes out only when you click Send or press Enter in the composer. Nothing posts on its own. No reactions and no read marks.
 - **No cloned Herdr files:** `install.sh` builds a `main-slack` layout from Herdr's own `main.json`, so Herdr's updates keep coming.

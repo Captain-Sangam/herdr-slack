@@ -78,7 +78,8 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - Exclude hides a channel by name, a DM by the person's or bot's name, and a group DM by its names.
   - `*` is any run of characters and `?` is one character. Exclude wins.
 - **Send to agent:**
-  - It opens the chosen agent in a new tab of the Herdr space named `space`. If that space is not open, it makes it at `~/code`. The default is `claude --model claude-opus-5-5`.
+  - It opens the chosen agent in a new tab of the space set under the gear. The default is `claude --model claude-opus-5-5` in the space `space` at `~/code`.
+  - The space setting: a chip for each open space on this computer, or "New space…" with a name, a folder and "Choose…". Send finds the space by its stored id, else by its stored name. If it is not open, Send makes it at the stored folder. After a send, the panel stores the id of the space that it used, so a rename keeps the target. A folder must be a full path after `~` expansion.
   - The agent chips list the installed agents from Herdr's `knownAgents()`. A click picks one and sets its default model: `claude-opus-5-5` for Claude, empty for the others.
   - The model saves on Enter or when the input loses focus. Only letters, digits, `.`, `-`, `_` and `/` save. Empty means the agent's own default. The flag is `--model` for Claude and `-m` for Codex. Other agents get no model.
   - For Claude, the first message gives the permalink. It tells Claude to read the thread, the files and the links with its own Slack tools.
@@ -140,7 +141,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - `tab.new` and `space.new`, through `herdr-app do`, so that a failure comes back as an error.
 - **Shared keys:**
   - `slack.items`: the newest 150 items, only when the list changes.
-  - `slack.status`, `slack.me` (the user id, never the token), `slack.seen`, `slack.dismissed`, `slack.filters` and `slack.agent` (`{agent, model}`).
+  - `slack.status`, `slack.me` (the user id, never the token), `slack.seen`, `slack.dismissed`, `slack.filters` and `slack.agent` (`{agent, model, space}`, with `space` as `{id, name, folder}`).
   - `workspace.panels`: the button copy adds `"slack"`.
 - **Slack Web API**, user token:
   - Read methods: `auth.test`, `search.messages` (`<@USER_ID>` and `to:me`, 50 each, by time), `users.info`, `conversations.info`, `conversations.members`, `conversations.history` and `conversations.replies`.
@@ -182,7 +183,7 @@ Tell the person these facts before you add this layout:
   - A mod copy starts the first time it shows. The panel column starts hidden, so the poller is in the always-shown button copy.
   - Herdr's `tabs` mod restores a space's panel only if its id is in `shared("workspace.panels")`, so the button copy adds `"slack"`.
 - **Snapshot:** `layouts/main-slack.json` is a snapshot of Herdr 0.1.15's `main.json` with the patch. After a Herdr update that changes `main.json`, make the file again with `layout/main-slack.jq`, or run `./install.sh`. A copy from herdr.dev does not change by itself.
-- **Fixed values in `mods/slack/lib.js`:** the space name `space` and the folder `~/code`. The agent and the model are settings under the gear. Their defaults (`AGENT`: Claude, `claude-opus-5-5`) and the model suggestions (`MODELS`) are in `lib.js`.
+- **Defaults in `mods/slack/lib.js`:** the agent, the model and the space are settings under the gear. Their defaults (`AGENT`: Claude, `claude-opus-5-5`; `SPACE`: `space` at `~/code`) and the model suggestions (`MODELS`) are in `lib.js`.
 - **Limits:** no pagination (50 newest matches for each search, 150 items kept). Without the `*:history` scopes, the view shows "Needs history permission". Without `chat:write`, a reply shows "Needs the chat:write permission". Without `files:read`, there are no thumbnails. Custom workspace emoji show as text.
 - **`herdr-app check`** runs the meter's `init`. If the Claude data is stale and the Mac is in use, the check can start a probe. The meter removes a probe older than 5 min on its next probe.
 

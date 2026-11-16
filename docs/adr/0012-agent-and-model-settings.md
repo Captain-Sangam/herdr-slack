@@ -1,6 +1,6 @@
 # ADR 0012: Agent and model settings for Send to agent
 
-- **Status:** Accepted, 2026-11-16. Replaces the fixed `ARGV` constant of decision 10.
+- **Status:** Accepted, 2026-11-16. Replaces the fixed `ARGV` constant of decision 10. [ADR 0014](0014-send-to-space-setting.md) adds the space setting to `shared("slack.agent")`.
 - **Decided by:** Ajay, the owner of the project.
 
 ## Context

@@ -1011,50 +1011,103 @@ export function agentTask(i, data = null) {
   ].join("\n");
 }
 
-// Decision 10: a tab in the local space named "space", or that space at ~/code.
-export function sendCommand(spaces, home, item, argv, task) {
-  const space = spaces.find((s) => s.name === "space" && !s.machine);
-  return space
-    ? [
-        "tab.new",
-        {
-          space: space.id,
-          name: `slack ${item.sender}`.slice(0, 40),
-          argv,
-          task,
-        },
-      ]
-    : ["space.new", { name: "space", folder: `${home}/code`, argv, task }];
+// ADR 0014: the space that Send to agent uses, in shared("slack.agent").space as
+// {id, name, folder}. With no setting it is "space" at ~/code, as decision 10 had it.
+export const SPACE = { id: null, name: "space", folder: "~/code" };
+
+// "~" and "~/..." go under home. The result must be absolute, else null.
+export function expandFolder(folder, home) {
+  const f = String(folder ?? "").trim() || SPACE.folder;
+  const abs =
+    f === "~" ? home : f.startsWith("~/") ? `${home}${f.slice(1)}` : f;
+  return abs.startsWith("/") ? abs : null;
+}
+
+// The open target: the stored id (so a rename keeps it), else the stored name.
+// Only spaces on this computer count. Null: Send makes the space.
+export function sendSpace(spaces, setting) {
+  const s = { ...SPACE, ...(setting ?? {}) },
+    local = spaces.filter((x) => !x.machine);
+  return (
+    local.find((x) => s.id && x.id === s.id) ??
+    local.find((x) => x.name === s.name) ??
+    null
+  );
+}
+
+// A tab in the target space, else a new space with the stored name and folder.
+export function sendCommand(spaces, home, item, argv, task, setting) {
+  const s = { ...SPACE, ...(setting ?? {}) },
+    space = sendSpace(spaces, s);
+  if (space)
+    return [
+      "tab.new",
+      {
+        space: space.id,
+        name: `slack ${item.sender}`.slice(0, 40),
+        argv,
+        task,
+      },
+    ];
+  const folder = expandFolder(s.folder, home);
+  if (!folder)
+    return [
+      null,
+      {
+        error: `The folder "${s.folder}" is not a full path. Start it with "/" or "~/".`,
+      },
+    ];
+  return ["space.new", { name: s.name, folder, argv, task }];
 }
 
 // The send itself, with the host functions passed in so the failure path is testable.
 // `context(item)` gives the conversation text for an agent other than Claude.
 // The item is marked seen only after `herdr-app do` succeeds; a failure toasts.
+// `saveSpace(space)` stores the id of the space used, when it is new or found by name.
 export async function sendToAgent(
   item,
-  { spaces, home, exec, notify, markSeen, settings, agents, context },
+  {
+    spaces,
+    home,
+    exec,
+    notify,
+    markSeen,
+    settings,
+    agents,
+    context,
+    saveSpace = () => {},
+  },
 ) {
   try {
     const pick = agentArgv(settings, agents);
     if (pick.error) throw new Error(pick.error);
     const data = pick.agent.key === "claude" ? null : await context(item);
-    const dir = await exec("mkdir", ["-p", `${home}/code`]);
-    if (dir.code !== 0) throw new Error(dir.stderr.trim() || "mkdir failed");
+    const s = { ...SPACE, ...(settings?.space ?? {}) };
     const [command, args] = sendCommand(
       spaces,
       home,
       item,
       pick.argv,
       agentTask(item, data),
+      s,
     );
+    if (args.error) throw new Error(args.error);
+    if (command === "space.new") {
+      const dir = await exec("mkdir", ["-p", args.folder]);
+      if (dir.code !== 0) throw new Error(dir.stderr.trim() || "mkdir failed");
+    }
     const r = await exec("herdr-app", ["do", command, JSON.stringify(args)]);
-    let error = null;
+    let out = {};
     try {
-      error = JSON.parse(r.stdout || "{}").error ?? null;
+      out = JSON.parse(r.stdout || "{}") ?? {};
     } catch {}
-    if (r.code !== 0 || error)
-      throw new Error(error || r.stderr.trim() || `herdr-app exited ${r.code}`);
+    if (r.code !== 0 || out.error)
+      throw new Error(
+        out.error || r.stderr.trim() || `herdr-app exited ${r.code}`,
+      );
     markSeen(item.id);
+    const id = command === "tab.new" ? args.space : out.space;
+    if (id && id !== s.id) saveSpace({ ...s, id });
     return true;
   } catch (e) {
     notify({

@@ -34,6 +34,7 @@ This folder holds the documentation of herdr-slack. Start with the architecture 
 | [0011](adr/0011-replies-from-the-conversation-view.md) | Replies from the conversation view, only on an explicit Send. | Accepted, replaces a first rule |
 | [0012](adr/0012-agent-and-model-settings.md)           | Agent and model settings for Send to agent.                   | Accepted, replaces `ARGV`       |
 | [0013](adr/0013-thread-read-marks.md)                  | Read marks for threads, fetched least recently checked first. | Accepted, replaces part of 0006 |
+| [0014](adr/0014-send-to-space-setting.md)              | A setting for the space that Send to agent uses.              | Accepted, replaces `space`      |
 
 To add a decision:
 
