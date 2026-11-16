@@ -13,8 +13,11 @@ import {
   toItem,
   merge,
   markRead,
+  markKey,
   unread,
-  staleConversations,
+  staleMarks,
+  unmarked,
+  groupRows,
   pruneSeen,
   unreadCount,
   visible,
@@ -324,7 +327,7 @@ test("an excluded-channel flood cannot push out a DM", () => {
   assert.equal(merge([dm], flood, {}).length, 150);
 });
 
-test("unread: last_read for top-level, seen for thread replies", () => {
+test("unread: a conversation's last_read for top-level, the thread's for replies", () => {
   const top = toItem(match(ch("eng"), "100.000001"));
   const reply = toItem(
     match(ch("eng"), "90.000001", {
@@ -332,19 +335,120 @@ test("unread: last_read for top-level, seen for thread replies", () => {
     }),
   );
   const newer = toItem(match(ch("eng"), "200.000001"));
-  const items = markRead([newer, top, reply], { CENG: "150.000000" });
+  assert.equal(markKey(top), "CENG");
+  assert.equal(markKey(reply), "CENG:80.000001");
   const seen = new Set();
+  // The channel's last_read never covers a thread reply.
+  let items = markRead([newer, top, reply], { CENG: "150.000000" });
   assert.deepEqual(
     items.map((i) => unread(i, seen)),
     [true, false, true],
   );
+  // The thread's last_read does.
+  items = markRead(items, {
+    CENG: "150.000000",
+    "CENG:80.000001": "90.000001",
+  });
+  assert.deepEqual(
+    items.map((i) => unread(i, seen)),
+    [true, false, false],
+  );
   // Unknown last_read: unread until seen.
-  assert.equal(unread(markRead([top], {})[0], seen), true);
-  assert.equal(unread(items[2], new Set([reply.id])), false);
-  assert.deepEqual(staleConversations(items, seen), ["CENG"]);
+  assert.equal(unread(markRead([reply], {})[0], seen), true);
+  assert.equal(unread(markRead([reply], {})[0], new Set([reply.id])), false);
   assert.equal(unreadCount(items, seen, { include: [], exclude: ["eng"] }), 0);
-  assert.equal(unreadCount(items, seen, {}), 2);
+  assert.equal(unreadCount(items, seen, {}), 1);
   assert.deepEqual(pruneSeen(["gone", reply.id], items), [reply.id]);
+});
+
+test("read marks follow Slack both ways; rows and the badge follow them", () => {
+  const dm = { id: "D1", is_im: true, user: "U2" };
+  const a = toItem(match(dm, "10.000001")),
+    b = toItem(match(dm, "20.000001")),
+    r = toItem(
+      match(ch("eng"), "31.000001", {
+        permalink: "https://x/p?thread_ts=30.000001",
+      }),
+    );
+  const seen = new Set();
+  const cached = markRead([b, a, r], { D1: "10.000001" });
+  assert.deepEqual(
+    groupRows(cached, seen).map((x) => [x.key, x.unread]),
+    [
+      ["CENG:30.000001", 1],
+      ["D1", 1],
+    ],
+  );
+  assert.equal(unreadCount(cached, seen, {}), 2);
+  // Slack's newer marks beat the cache: the rows and the badge clear.
+  const fresh = markRead(cached, {
+    D1: "20.000001",
+    "CENG:30.000001": "31.000001",
+  });
+  assert.deepEqual(
+    groupRows(fresh, seen).map((x) => x.unread),
+    [0, 0],
+  );
+  assert.equal(unreadCount(fresh, seen, {}), 0);
+  assert.deepEqual(unmarked(cached, fresh), []);
+  // "Mark unread" in Slack moves a mark back: an older value beats the cache too,
+  // and the ids it made unread leave the seen list.
+  const back = markRead(fresh, {
+    D1: "10.000001",
+    "CENG:30.000001": "31.000001",
+  });
+  assert.deepEqual(
+    back.map((i) => i.read),
+    [false, true, true],
+  );
+  assert.deepEqual(unmarked(fresh, back), [b.id]);
+  assert.equal(unreadCount(back, seen, {}), 1);
+});
+
+test("read marks to fetch: unread first, least recently checked first, none starves", () => {
+  // 30 DMs, each with one unread message, newest first.
+  const items = Array.from({ length: 30 }, (_, n) =>
+    toItem(match({ id: `D${n}`, is_im: true }, `${100 - n}.000001`)),
+  );
+  const seen = new Set(),
+    checked = {};
+  const poll = (now) => {
+    const keys = staleMarks(items, seen, checked, 10);
+    for (const k of keys) checked[k] = now;
+    return keys;
+  };
+  // Never checked: newest first.
+  assert.deepEqual(poll(1000), [
+    "D0",
+    "D1",
+    "D2",
+    "D3",
+    "D4",
+    "D5",
+    "D6",
+    "D7",
+    "D8",
+    "D9",
+  ]);
+  assert.deepEqual(poll(2000).slice(0, 2), ["D10", "D11"]);
+  assert.deepEqual(poll(3000).slice(-1), ["D29"]);
+  // Then the oldest check again, so every mark is fetched within 3 polls of 10.
+  assert.deepEqual(poll(4000)[0], "D0");
+  // A mark with only read or seen items waits `grace` ms behind the unread ones.
+  const read = markRead(items, { D0: "100.000001" });
+  seen.add(items[1].id);
+  const c = { D0: 0, D1: 0 };
+  for (let n = 2; n < 30; n++) c[`D${n}`] = 5000;
+  assert.deepEqual(staleMarks(read, seen, c, 3, 600000), ["D2", "D3", "D4"]);
+  assert.deepEqual(staleMarks(read, seen, c, 3, 1000), ["D0", "D1", "D2"]);
+  // One fetch per thread, keyed by channel and thread.
+  const t = (ts) =>
+    toItem(
+      match(ch("eng"), ts, { permalink: "https://x/p?thread_ts=1.000001" }),
+    );
+  assert.deepEqual(staleMarks([t("3.000001"), t("2.000001")], seen), [
+    "CENG:1.000001",
+  ]);
 });
 
 test("backoff doubles from 60 s up to 10 min", () => {
@@ -760,7 +864,7 @@ test("unnamed channel mentions: looked up by id, shown by name", () => {
 });
 
 test("rows: one per DM conversation, one per channel thread, newest first", async () => {
-  const { groupRows, rowKey } = await import("../mods/slack/lib.js");
+  const { rowKey } = await import("../mods/slack/lib.js");
   const dm = { id: "D1", is_im: true, user: "U2" },
     eng = ch("eng");
   const reply = (ts, root) => ({

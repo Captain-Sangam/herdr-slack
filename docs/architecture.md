@@ -69,7 +69,7 @@ sequenceDiagram
   B->>S: search.messages for mentions
   B->>S: search.messages for to:me
   B->>S: users.info, conversations.members
-  B->>S: conversations.info for last_read
+  B->>S: conversations.info, conversations.replies for last_read
   B->>B: merge, filter, mark read, sync images
   B->>SH: slack.items, only if changed
   B->>SH: slack.status
@@ -79,7 +79,7 @@ sequenceDiagram
 - Each search asks for the newest 50 matches by time. There is no pagination.
 - The poller merges the matches with the old list, removes duplicates by channel id and `ts`, applies the filters, and keeps the newest 150 items.
 - Each preview is at most 300 characters.
-- Lookups have caps for each poll: 10 new people, 10 group DM member lists, 10 channel names and 10 `last_read` values.
+- Lookups have caps for each poll: 10 new people, 10 group DM member lists, 10 channel names and 20 read marks (`last_read` values).
 - Only one poll runs at a time.
 
 ### 3.2 Shared state
@@ -103,7 +103,7 @@ Each mod copy has its own `localStorage`. Herdr keeps it under `~/.config/herdr-
 
 | Copy        | Key          | Content                                                      |
 | ----------- | ------------ | ------------------------------------------------------------ |
-| Button      | `lastRead`   | Channel id to `last_read` ts, pruned to the listed items.    |
+| Button      | `lastRead`   | Read mark key to `last_read` ts, pruned to the listed items. |
 | Button      | `people`     | User id to display name, real name, handle and avatar URL.   |
 | Button      | `channels`   | Channel id to name, for mentions written as `<#C123>`.       |
 | Button      | `members`    | Group DM id to member ids.                                   |
@@ -132,9 +132,19 @@ Herdr's `image()` reads only from the app home, and a file saved under `mods/` r
 
 The panel never marks messages read and never adds reactions ([ADR 0006](adr/0006-read-only-unread.md)). Its only write is a reply that you send ([3.7](#37-replies)).
 
-- A DM message or a top-level channel message is read when its `ts` is at or before the conversation's `last_read` from `conversations.info`.
-- A thread reply does not move `last_read`. It stays unread until you open it, send it or dismiss it in the panel.
+Each item has a read mark ([ADR 0013](adr/0013-thread-read-marks.md)):
+
+| Item                                  | Read mark                                                               | Key                        |
+| ------------------------------------- | ----------------------------------------------------------------------- | -------------------------- |
+| DM message, top-level channel message | The conversation's `last_read`, `conversations.info`                    | `<channel id>`             |
+| Thread reply                          | The thread's `last_read`, the parent message in `conversations.replies` | `<channel id>:<thread ts>` |
+
+- An item is read when its `ts` is at or before its read mark.
 - An item is unread when it is not read and its id is not in `slack.seen`.
+- The newest value from Slack replaces the cached one, forward or back. If a mark moves back ("Mark unread" in Slack), the items that it makes unread leave `slack.seen`.
+- Each poll fetches at most 20 read marks, least recently checked first. A mark with an unread item comes first. A mark with no unread item counts as checked 10 min later, so it is checked less often but never starves.
+- A thread that you do not follow in Slack has no `last_read`. Its replies stay unread until you open, send or dismiss them in the panel.
+- The rows, the tab counts and the badge use the read flag in `slack.items`. They change when a poll publishes new flags.
 - The badge on the button counts unread messages that pass the filters and are not dismissed.
 
 ### 3.6 Grouping and the conversation view
