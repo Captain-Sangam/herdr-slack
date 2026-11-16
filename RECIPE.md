@@ -24,7 +24,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - Without a token or with a refused token, a 6 px `blocked` dot shows. Other problems show a `dim` dot.
 - **Terminal card** (`main`): Herdr's active tab, unchanged.
 - **Slack panel** (`slack` in the stack `panel-body`, 368 px when the panel column shows), a card with radius 10, `background` and a `border` line:
-  - Header, 42 px: `Slack`, an `N unread` chip, and a gear that opens the filters.
+  - Header, 42 px: `Slack`, an `N unread` chip, a refresh button (a 26 px box with a 14 px `refresh.svg`; it spins while a refresh runs), and a gear that opens the filters. For 4 s after a refresh, `Updated just now` or the wait shows in 11 px `dim` text left of the button.
   - Filters, under the header when open: `Include channels` and `Exclude channels, people or bots` (28 px inputs), a hint, and `N dismissed` with **Clear dismissed**.
   - Under the filters, after a `border` line, `Send to agent`: a 24 px chip for each installed agent with its icon (the chosen one `selected` with an `accent` outline), a `Model` input, suggestion chips, and a hint. For an agent without a model flag, the input is a `dim` box that says "model not supported for this agent".
   - Tabs row, 36 px: `All`, `Mentions` and `DMs` with row counts, and an `Unread` toggle at the right (a 7 px dot, `accent` when on).
@@ -35,7 +35,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - Slack emoji codes show as Unicode emoji. Custom workspace emoji stay as `dim` `:name:` text.
   - The preview is plain text: no `*`, `_`, `~` or backticks.
 - **Conversation view**, in place of the list:
-  - Header, 42 px: a back arrow, the group photos for a group DM, the title, Open in Slack and Send to agent.
+  - Header, 42 px: a back arrow, the group photos for a group DM, the title, the refresh button (it spins while the view loads), Open in Slack and Send to agent.
   - The title is the person, the group, `#channel`, or `Thread in #channel`.
   - Messages: a 32 px photo, the name (12.5 px semibold) and the time, then the full text (12.5 px, `.SystemUIFont`).
   - The text shows Slack formatting:
@@ -62,10 +62,12 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - The meter reads the usage files.
   - The button copy polls Slack.
   - The panel moves the relative times, and refreshes an open conversation view.
+  - Also, the button copy reads `shared("slack.refresh")` once a second. It draws nothing and polls only on a new request.
 - **Usage meter:**
   - A click reads the files again and starts a probe if one is allowed. If a probe ran less than 30 min ago, a toast tells when the next one is allowed.
   - A probe is a hidden one-word Claude Haiku session. It starts by itself when the Claude data is more than 60 min old and the Mac had input in the last 10 min.
   - At most one probe runs in 30 min. While it runs, a spinner shows next to the Claude rows.
+- **Refresh button:** a click in the list asks the button copy to poll now, through `shared("slack.refresh")`. The button copy checks for a request once a second and answers in `shared("slack.polled")`. A click in a view loads the view again. A refresh in flight takes no new click. At most one manual refresh in 10 s. While Slack's backoff lasts, the button says "Slack asked to wait, retry in N s" and does not poll. The 60 s timers stay as they are.
 - **Slack button:** a click opens or closes the panel on Slack. Each space keeps its own open panel (Files, Changes, Slack or none), through Herdr's `tabs` mod.
 - **Panel list:**
   - Hover over a row: a small bar with Open in Slack, Send to agent and Dismiss shows over the row's top right. The row does not get taller.
@@ -92,7 +94,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - A mention outside a thread opens the 15 messages up to it and the 10 after it. The mention is highlighted.
   - `N replies` opens that thread. The back arrow or Esc goes back one step, then to the list at the same tab and scroll position.
   - A link opens in the browser. Only `http`, `https` and `mailto` links open. A mention opens the person or the channel in Slack.
-  - The view refreshes every 60 s. It stays at the bottom unless you scrolled up.
+  - The view refreshes every 60 s and on a click on the refresh button. It stays at the bottom unless you scrolled up.
 - **Replies:**
   - Enter or Send posts the reply as you. Shift+Enter adds a line.
   - A DM or group DM reply goes to the conversation. A thread reply goes to the thread. A reply to a channel mention outside a thread starts a thread under the mention, and the view opens that thread.
@@ -154,7 +156,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - The meter runs `sh` with `find`, `tail` and `grep` over the Codex logs, and `ioreg` for idle time.
   - The meter's probe runs `hc run`, `hc wait`, `hc get`, `hc kill` and `hc rm`, with `claude --model claude-haiku-5-5`.
 - **Art:**
-  - `mods/slack/slack.svg` (a hash sign), `open.svg`, `send.svg` and `dismiss.svg`. These are one-colour glyphs, tinted with the text colour.
+  - `mods/slack/slack.svg` (a hash sign), `open.svg`, `send.svg`, `dismiss.svg` and `refresh.svg` (a circular arrow). These are one-colour glyphs, tinted with the text colour.
   - `mods/slack/emoji.js` maps Slack emoji names to Unicode. `scripts/gen-emoji.mjs` makes it from iamcal/emoji-data v16.0.0.
 
 ## Watch out

@@ -80,6 +80,8 @@ import {
   SPACE,
   expandFolder,
   sendSpace,
+  refreshGate,
+  refreshBusy,
 } from "./lib.js";
 
 const API = "https://slack.com/api/";
@@ -123,6 +125,8 @@ export default class Slack extends View {
     this.polling = false;
     this.delay = 0; // backoff, ms
     this.until = 0;
+    // Manual refresh requests from the panel: the newest seen, and the newest answered.
+    this.asked = this.answered = shared("slack.refresh")?.req ?? 0;
     // Kept across reloads, so unread counts are right before fresh values arrive.
     this.lastRead = JSON.parse(localStorage.getItem("lastRead") ?? "{}"); // markKey -> last_read ts
     this.checked = {}; // markKey -> time of the last fetch, ms
@@ -142,6 +146,26 @@ export default class Slack extends View {
       setShared("workspace.panels", [...panels, "slack"]);
     this.poll(cx);
     cx.timer.every(60000, (cx) => this.poll(cx));
+    // ponytail: a task started from render() never runs, so a 1 s check reads the request.
+    // It only reads one shared value. Use nextCommand() if Herdr can address one copy.
+    cx.timer.every(1000, (cx) => this.checkRefresh(cx));
+  }
+
+  // A manual refresh. A request during a poll is answered when that poll ends; during
+  // Slack's backoff it is answered at once, without a poll.
+  checkRefresh(cx) {
+    const req = shared("slack.refresh")?.req ?? 0;
+    if (req <= this.asked) return;
+    this.asked = req;
+    if (this.polling) return;
+    if (Date.now() < this.until) this.answer();
+    else this.poll(cx);
+  }
+
+  answer() {
+    if (this.asked <= this.answered) return;
+    this.answered = this.asked;
+    setShared("slack.polled", { req: this.answered, at: Date.now() });
   }
 
   async call(method, params) {
@@ -358,10 +382,19 @@ export default class Slack extends View {
       localStorage.setItem("channels", JSON.stringify(this.channels));
   }
 
-  setStatus(state, message = "") {
+  // `until`: the end of Slack's backoff, so the panel's refresh button can wait for it.
+  setStatus(state, message = "", until = 0) {
     const now = shared("slack.status");
-    if (now?.state !== state || now?.message !== message)
-      setShared("slack.status", { state, message });
+    if (
+      now?.state !== state ||
+      now?.message !== message ||
+      (now?.until ?? 0) !== until
+    )
+      setShared("slack.status", {
+        state,
+        message,
+        ...(until ? { until } : {}),
+      });
   }
 
   poll(cx) {
@@ -473,6 +506,7 @@ export default class Slack extends View {
           this.setStatus(
             "ratelimited",
             `Slack rate limit. Next try in ${Math.round(this.delay / 60000)} min.`,
+            this.until,
           );
         } else if (e.kind === "auth") {
           this.token = null; // read the Keychain again next poll
@@ -491,6 +525,7 @@ export default class Slack extends View {
         }
       } finally {
         this.polling = false;
+        this.answer();
         cx.notify();
       }
     });
@@ -637,6 +672,9 @@ export default class Slack extends View {
     }
     this.newSpace = false; // "New space…" is open
     this.spaceError = null;
+    // The refresh button: the last manual refresh (list or view), and a short note.
+    this.lastRefresh = shared("slack.refresh")?.req ?? 0;
+    this.flash = null; // {text, at}
     // Reply composers by target: the drafts live here only, never in shared.
     this.replies = new Map();
     this.posting = null; // the target key of the one post in flight
@@ -831,7 +869,7 @@ export default class Slack extends View {
     return { names, images };
   }
 
-  loadView(cx, { first = false, older = false } = {}) {
+  loadView(cx, { first = false, older = false, manual = false } = {}) {
     const v = this.views.at(-1);
     if (!v || v.loading) return;
     v.loading = true;
@@ -896,10 +934,103 @@ export default class Slack extends View {
           this.token = null;
       } finally {
         v.loading = false;
+        if (manual && !v.error) this.flashText("Updated just now", cx);
         cx.notify();
       }
     });
     cx.notify();
+  }
+
+  // The refresh button. In the list it asks the button copy to poll; in a view it loads
+  // the view again, and the scroll stays unless the view is at the bottom.
+  refreshState(now, last = this.lastRefresh) {
+    const v = this.views.at(-1);
+    return refreshGate({
+      now,
+      busy: v
+        ? Boolean(v.loading)
+        : refreshBusy(
+            shared("slack.refresh")?.req,
+            shared("slack.polled"),
+            now,
+          ),
+      last,
+      until: shared("slack.status")?.until ?? 0,
+    });
+  }
+
+  refresh(cx) {
+    const now = Date.now(),
+      gate = this.refreshState(now);
+    if (gate.act === "busy") return;
+    if (gate.act === "wait") return this.flashText(gate.text, cx);
+    this.lastRefresh = now;
+    if (this.views.length) return this.loadView(cx, { manual: true });
+    setShared("slack.refresh", { req: now });
+    cx.notify();
+    // Waits for the answer only to show the note. The spinner follows shared by itself.
+    cx.spawn(async (cx) => {
+      while (
+        refreshBusy(now, shared("slack.polled"), Date.now()) &&
+        shared("slack.refresh")?.req === now
+      )
+        await cx.sleep(250);
+      if (
+        shared("slack.polled")?.req === now &&
+        shared("slack.status")?.state === "ok"
+      )
+        this.flashText("Updated just now", cx);
+      else cx.notify();
+    });
+  }
+
+  // A note next to the refresh button for a few seconds.
+  flashText(text, cx) {
+    const at = Date.now();
+    this.flash = { text, at };
+    cx.notify();
+    cx.timer.after(4000, (cx) => {
+      if (this.flash?.at !== at) return;
+      this.flash = null;
+      cx.notify();
+    });
+  }
+
+  // Render does not run again when the cooldown ends, so the button shows only the busy
+  // and the backoff states. A click in the cooldown shows the wait in the note.
+  refreshButton(t, id, size) {
+    const gate = this.refreshState(Date.now(), 0),
+      spinning = gate.act === "busy";
+    return div()
+      .id(id)
+      .size(size)
+      .flex()
+      .flex_none()
+      .items_center()
+      .justify_center()
+      .rounded(6)
+      .cursor_pointer()
+      .text_color(gate.act === "go" || spinning ? t.muted : t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(gate.text)
+      .on_click((_e, cx) => this.refresh(cx))
+      .child(
+        spinning
+          ? svg("mods/slack/refresh.svg").size(14).spin(900)
+          : svg("mods/slack/refresh.svg").size(14),
+      );
+  }
+
+  flashNote(t) {
+    return this.flash
+      ? div()
+          .flex_none()
+          .max_w(200)
+          .truncate()
+          .text_size(11)
+          .text_color(t.dim)
+          .child(this.flash.text)
+      : null;
   }
 
   // A thread, up to 5 pages of 200 (conversations.replies).
@@ -1513,6 +1644,8 @@ export default class Slack extends View {
               .child(`${unreadTotal} unread`),
           )
           .child(div().flex_1())
+          .when(Boolean(this.flash), (el) => el.child(this.flashNote(t)))
+          .child(this.refreshButton(t, "slack-refresh", 26))
           .child(
             div()
               .id("slack-filters")
@@ -2165,15 +2298,8 @@ export default class Slack extends View {
             .child(
               div().flex_1().min_w(0).truncate().font_semibold().child(v.title),
             )
-            .when(v.loading, (el) =>
-              el.child(
-                svg("mods/workspace-chrome/spinner.svg")
-                  .size(12)
-                  .flex_none()
-                  .text_color(t.dim)
-                  .spin(900),
-              ),
-            )
+            .when(Boolean(this.flash), (el) => el.child(this.flashNote(t)))
+            .child(this.refreshButton(t, "view-refresh", 28))
             .child(
               icon(
                 "view-open",

@@ -11,18 +11,21 @@ This page lists the outside facts that the code depends on. They come from Herdr
 
 The mods import these names. The installed guide `~/.config/herdr-app/AGENTS.md` and the `.d.ts` files next to it describe them.
 
-| Module      | Names                                                                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gpui-kit`  | `View`, `div`, `svg`, `image`                                                                                                                |
-| `gpui-base` | `h_flex`, `v_flex`, `InputState`, `Input`, `TextareaState`, `Textarea`, `Scrollbar`, `ScrollHandle`, `TextView`                              |
-| `herdr`     | `exec`, `hc`, `home`, `appHome`, `readTextFile`, `theme`, `layout`, `notify`, `run`, `props`, `shared`, `setShared`, `spaces`, `knownAgents` |
-| Built-ins   | `fetch`, `localStorage`, `console.log`                                                                                                       |
-| `cx`        | `cx.timer.every`, `cx.spawn`, `cx.notify`, `cx.focus_handle`, `cx.stop_propagation`, `cx.bind_keys`                                          |
+| Module      | Names                                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gpui-kit`  | `View`, `div`, `svg`, `image`                                                                                                                              |
+| `gpui-base` | `h_flex`, `v_flex`, `InputState`, `Input`, `TextareaState`, `Textarea`, `Scrollbar`, `ScrollHandle`, `TextView`                                            |
+| `herdr`     | `exec`, `hc`, `home`, `appHome`, `readTextFile`, `theme`, `layout`, `notify`, `run`, `props`, `shared`, `setShared`, `spaces`, `knownAgents`, `pickFolder` |
+| Built-ins   | `fetch`, `localStorage`, `console.log`                                                                                                                     |
+| `cx`        | `cx.timer.every`, `cx.timer.after`, `cx.spawn`, `cx.sleep`, `cx.notify`, `cx.focus_handle`, `cx.stop_propagation`, `cx.bind_keys`                          |
 
 Facts that the design relies on:
 
 - A mod copy starts the first time it shows. It stays alive while its block is in the layout, shown or not.
 - `setShared` draws every mod again.
+- A task or timer that `render` starts never runs. A copy that must act on a `shared` change checks it from a timer that `init` starts. The button copy reads `slack.refresh` once a second for that reason.
+- All mods share one JS runtime and one `globalThis`. A value that a mod puts on `globalThis` (for example a stub `fetch`) applies to every mod until Herdr restarts.
+- `svg(...).spin(ms)` turns an icon natively, with no redraw from the mod.
 - `localStorage` is separate for each mod copy.
 - `fetch` takes `method`, `headers` and a string `body`. Its response has `status`, `ok`, `url`, `text()` and `json()`, but no response headers. So the mod cannot read `Retry-After`.
 - `TextareaState` has no way to change its placeholder, so the panel makes one for each reply target. `set_auto_grow(1, 6)` grows it to 6 rows. `release()` frees it.

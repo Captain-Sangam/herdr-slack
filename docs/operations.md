@@ -99,11 +99,22 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 
 ## 6. `ratelimited`
 
-**Symptom:** the status is `ratelimited`. The message tells when the next try is.
+**Symptom:** the status is `ratelimited`. The message tells when the next try is. The refresh button says "Slack asked to wait, retry in N s" and does not poll.
 
 - The poller waits 1 min, then 2, 4 and 8 min, then 10 min for each next failure. One successful poll sets the wait back to zero.
 - A poll makes 2 searches and at most 50 lookups. 20 are read marks (`last_read`). 10 each are for new people, group DM members and channel names.
 - A reload of the mod (for example `./install.sh`) also sets the wait back to zero. Do not reload in a loop to skip the wait.
+
+### The refresh button
+
+| Symptom                                   | Cause                                                                               | Fix                                                                        |
+| ----------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| "Refreshed just now, retry in N s"        | A manual refresh ran less than 10 s ago.                                            | Wait. The 60 s poll keeps running.                                         |
+| "Slack asked to wait, retry in N s"       | Slack's backoff is active.                                                          | Wait. The button does not poll until the backoff ends.                     |
+| The icon spins for up to 30 s, then stops | No button copy answered: the Slack button is not in the layout, or its copy failed. | Run `herdr-app status`. Check that `slack.polled` follows `slack.refresh`. |
+| No "Updated just now"                     | The poll failed. The status line shows why.                                         | See [First checks](#1-first-checks).                                       |
+
+- To see a request and its answer: `jq '{refresh: ."slack.refresh", polled: ."slack.polled"}' ~/.config/herdr-app/shared.json`. After a working refresh, `polled.req` equals `refresh.req`.
 
 ## 7. Stale usage and the probe
 
