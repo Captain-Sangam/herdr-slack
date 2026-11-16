@@ -46,17 +46,18 @@ Facts that the design relies on:
 
 ### 1.3 Commands
 
-| Command                                                                  | Used by      | Purpose                                                |
-| ------------------------------------------------------------------------ | ------------ | ------------------------------------------------------ |
-| `run("layout.select", {stack: "panel-body", child: "slack"})`            | Button copy  | Shows the Slack child in the panel stack.              |
-| `run("layout.show", {id: "panel"})`, `run("layout.hide", {id: "panel"})` | Button copy  | Opens or closes the panel column.                      |
-| `herdr-app do tab.new {space, name, argv, task}`                         | Panel copy   | Adds an agent tab to the space `space`.                |
-| `herdr-app do space.new {name, folder, argv, task}`                      | Panel copy   | Makes the space `space` at `~/code` with an agent tab. |
-| `herdr-app do layout.switch --name main-slack`                           | `install.sh` | Shows the new layout.                                  |
-| `herdr-app check <mod folder>`                                           | `install.sh` | Loads a mod once and reports errors.                   |
+| Command                                                                  | Used by      | Purpose                                           |
+| ------------------------------------------------------------------------ | ------------ | ------------------------------------------------- |
+| `run("layout.select", {stack: "panel-body", child: "slack"})`            | Button copy  | Shows the Slack child in the panel stack.         |
+| `run("layout.show", {id: "panel"})`, `run("layout.hide", {id: "panel"})` | Button copy  | Opens or closes the panel column.                 |
+| `herdr-app do tab.new {space, name, argv, task}`                         | Panel copy   | Adds an agent tab to the Send to agent space.     |
+| `herdr-app do space.new {name, folder, argv, task}`                      | Panel copy   | Makes that space at its folder with an agent tab. |
+| `herdr-app do layout.switch --name main-slack`                           | `install.sh` | Shows the new layout.                             |
+| `herdr-app check <mod folder>`                                           | `install.sh` | Loads a mod once and reports errors.              |
 
-- `herdr-app do` prints what it made. On failure it prints `{ "error": … }` and exits 1.
-- `spaces()` gives the open spaces. Send to agent looks for a local space (`machine` null) named `space`.
+- `herdr-app do` prints what it made, for example `{ "space", "tab", "terminal" }` for `space.new`. On failure it prints `{ "error": … }` and exits 1.
+- `spaces()` gives the open spaces with `id`, `name`, `folder` and `machine` (null for this computer). The id stays the same after a rename. Send to agent looks for a local space with the stored id, then the stored name ([ADR 0014](adr/0014-send-to-space-setting.md)).
+- `pickFolder()` opens the system folder picker on this computer. It gives the folder, or null on cancel. "Choose…" in the space setting uses it.
 
 ### 1.4 herdr-core (`hc`)
 

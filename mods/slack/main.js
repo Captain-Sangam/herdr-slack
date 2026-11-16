@@ -30,6 +30,7 @@ import {
   appHome,
   notify,
   knownAgents,
+  pickFolder,
 } from "herdr";
 import {
   toItem,
@@ -76,6 +77,9 @@ import {
   modelFlag,
   validModel,
   contextText,
+  SPACE,
+  expandFolder,
+  sendSpace,
 } from "./lib.js";
 
 const API = "https://slack.com/api/";
@@ -617,6 +621,22 @@ export default class Slack extends View {
     this.model.on("submit", (_e, cx) => this.saveModel(cx));
     this.model.on("blur", (_e, cx) => this.saveModel(cx));
     this.modelError = null;
+    // Send to space (ADR 0014): a picked open space, or a new one by name and folder.
+    const sp = { ...SPACE, ...(this.agentSettings().space ?? {}) };
+    this.spaceName = InputState.new({
+      placeholder: SPACE.name,
+      value: sp.name,
+    });
+    this.spaceDir = InputState.new({
+      placeholder: SPACE.folder,
+      value: sp.folder,
+    });
+    for (const input of [this.spaceName, this.spaceDir]) {
+      input.on("submit", (_e, cx) => this.saveSpace(cx));
+      input.on("blur", (_e, cx) => this.saveSpace(cx));
+    }
+    this.newSpace = false; // "New space…" is open
+    this.spaceError = null;
     // Reply composers by target: the drafts live here only, never in shared.
     this.replies = new Map();
     this.posting = null; // the target key of the one post in flight
@@ -1011,7 +1031,7 @@ export default class Slack extends View {
     const model = key === AGENT.agent ? AGENT.model : "";
     this.model.set_value(model);
     this.modelError = null;
-    setShared("slack.agent", { agent: key, model });
+    setShared("slack.agent", { ...this.agentSettings(), agent: key, model });
     cx.notify();
   }
 
@@ -1023,8 +1043,55 @@ export default class Slack extends View {
       ? null
       : 'Letters, digits, ".", "-", "_" and "/" only. Not saved.';
     if (!this.modelError && model !== now.model)
-      setShared("slack.agent", { agent: now.agent, model });
+      setShared("slack.agent", { ...now, model });
     cx.notify();
+  }
+
+  // An open space: its id, so a rename keeps it, and its name and folder, so Send can
+  // make it again after it is closed.
+  pickSpace(sp, cx) {
+    const space = { id: sp.id, name: sp.name, folder: sp.folder || home() };
+    this.newSpace = false;
+    this.spaceError = null;
+    this.spaceName.set_value(space.name);
+    this.spaceDir.set_value(space.folder);
+    setShared("slack.agent", { ...this.agentSettings(), space });
+    cx.notify();
+  }
+
+  openNewSpace(cx) {
+    this.newSpace = true;
+    this.spaceName.set_value(SPACE.name);
+    this.spaceDir.set_value(SPACE.folder);
+    this.spaceError = null;
+    cx.notify();
+  }
+
+  // A new space by name and folder, without an id: Send finds it by name or makes it.
+  // A folder that is not a full path is not saved.
+  saveSpace(cx) {
+    const now = this.agentSettings(),
+      was = { ...SPACE, ...(now.space ?? {}) },
+      name = this.spaceName.value().trim() || SPACE.name,
+      folder = this.spaceDir.value().trim() || SPACE.folder;
+    this.spaceError = expandFolder(folder, home())
+      ? null
+      : 'Use a full path: start it with "/" or "~/". Not saved.';
+    if (
+      !this.spaceError &&
+      (was.id || was.name !== name || was.folder !== folder)
+    )
+      setShared("slack.agent", { ...now, space: { id: null, name, folder } });
+    cx.notify();
+  }
+
+  chooseFolder(cx) {
+    cx.spawn(async (cx) => {
+      const folder = await pickFolder({ prompt: "Use" }).catch(() => null);
+      if (!folder) return;
+      this.spaceDir.set_value(folder);
+      this.saveSpace(cx);
+    });
   }
 
   // Hides a row's items here and in the badge, and marks them seen. Slack is not changed.
@@ -1062,6 +1129,8 @@ export default class Slack extends View {
         settings: shared("slack.agent"),
         agents: this.agents,
         context: (i) => this.context(i),
+        saveSpace: (space) =>
+          setShared("slack.agent", { ...this.agentSettings(), space }),
       });
       this.sending = null;
       cx.notify();
@@ -1745,6 +1814,73 @@ export default class Slack extends View {
             flag
               ? "Empty: the agent's own default. Enter saves. Claude reads Slack itself; other agents get the conversation in the task."
               : "Other agents get the conversation in the task.",
+          ),
+      )
+      .child(this.spaceBox(t, field, chip));
+  }
+
+  // Send to space (ADR 0014): this computer's open spaces as chips, then "New space…"
+  // with a name and a folder. The chip that is on is the space a send uses now.
+  spaceBox(t, field, chip) {
+    const setting = { ...SPACE, ...(this.agentSettings().space ?? {}) },
+      local = spaces().filter((x) => !x.machine),
+      target = sendSpace(local, setting),
+      form = this.newSpace || !target;
+    return v_flex()
+      .gap(6)
+      .child(
+        div().pt(2).text_size(11).text_color(t.muted).child("Send to space"),
+      )
+      .child(
+        h_flex()
+          .flex_wrap()
+          .gap(4)
+          .children(
+            local.map((sp) =>
+              chip(
+                `space-${sp.id}`,
+                sp.name,
+                !form && sp.id === target.id,
+                (cx) => this.pickSpace(sp, cx),
+              ),
+            ),
+          )
+          .child(
+            chip("space-new", "New space…", form, (cx) =>
+              this.openNewSpace(cx),
+            ),
+          ),
+      )
+      .when(form, (el) =>
+        el.child(field("slack-space-name", "Name", this.spaceName)).child(
+          h_flex()
+            .gap(6)
+            .items_end()
+            .child(
+              div()
+                .flex_1()
+                .child(field("slack-space-folder", "Folder", this.spaceDir)),
+            )
+            .child(
+              chip("space-choose", "Choose…", false, (cx) =>
+                this.chooseFolder(cx),
+              ).h(28),
+            ),
+        ),
+      )
+      .when(Boolean(form && this.spaceError), (el) =>
+        el.child(
+          div().text_size(11).text_color(t.blocked).child(this.spaceError),
+        ),
+      )
+      .child(
+        div()
+          .text_size(11)
+          .text_color(t.dim)
+          .child(
+            form
+              ? "Send adds a tab to the open space with this name, or makes the space in this folder. Enter saves."
+              : `Each send adds a tab to "${target.name}", also after you rename it. If it is closed, Send makes it again.`,
           ),
       );
   }

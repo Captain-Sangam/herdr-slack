@@ -52,7 +52,7 @@ The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure
 - **`.agents/`:** the private council record. It is local only. It never goes to the public repo, and no public file links to it.
 - **Herdr:** drive it only with `hc` and `herdr-app`. Never use the legacy `herdr` CLI.
 - **Behaviour:** posts only from an explicit Send in the composer; no reactions, no read marks, no automatic posts.
-- **Send to agent:** the agent and the model are settings in `shared("slack.agent")`, set under the panel's gear. The defaults (`AGENT`: Claude with `claude-opus-5-5`) and the model suggestions (`MODELS`) are in `mods/slack/lib.js`. Never put the token in the agent task.
+- **Send to agent:** the agent, the model and the space are settings in `shared("slack.agent")`, set under the panel's gear. The defaults (`AGENT`: Claude with `claude-opus-5-5`; `SPACE`: `space` at `~/code`) and the model suggestions (`MODELS`) are in `mods/slack/lib.js`. Send finds the space by its stored id, then its name, and makes it only when neither is open ([ADR 0014](docs/adr/0014-send-to-space-setting.md)). Never put the token in the agent task.
 
 ## Conventions
 

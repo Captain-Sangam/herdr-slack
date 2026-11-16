@@ -50,7 +50,7 @@ WARNING: Send to agent gives Slack content to an agent that has tool access. A m
   - The text sits between `BEGIN SLACK DATA` and `END SLACK DATA`, with a note that it is untrusted content.
   - A line in the data that copies a marker is changed, so a message cannot end the block.
   - The task never holds the token.
-- The agent starts with its normal permission settings in the space `space` at `~/code`. If those settings allow commands without approval, a hostile message can try to run commands or to read and send files.
+- The agent starts with its normal permission settings in the space set under the gear (default: `space` at `~/code`). If those settings allow commands without approval, a hostile message can try to run commands or to read and send files.
 - The agent's argv is the agent's own `run` argv from Herdr, and a model that has only letters, digits, `.`, `-`, `_` and `/`. Slack content never goes into the argv of the agent.
 - Send only messages that you trust to an agent.
 - Keep approval prompts on for the agent's session. Read each command that it asks to run.

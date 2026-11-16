@@ -29,6 +29,8 @@ import {
   validModel,
   modelFlag,
   contextText,
+  sendSpace,
+  expandFolder,
 } from "../mods/slack/lib.js";
 
 const ME = "U0ME"; // the token's own user id, as auth.test reports it
@@ -484,6 +486,119 @@ test("send command: a tab in an open space, else the space at ~/code", () => {
   );
   assert.equal(c2, "space.new");
   assert.equal(a2.folder, "/h/code");
+});
+
+test("send to space: id first, then name, local only; default space at ~/code", () => {
+  const one = { id: "s1", name: "space", machine: null },
+    two = { id: "s2", name: "Ops", machine: null },
+    far = { id: "vps/s3", name: "space", machine: "vps" };
+  // The id wins over the name.
+  assert.equal(sendSpace([one, two], { id: "s2", name: "space" }), two);
+  // A renamed space is still found by its id.
+  assert.equal(
+    sendSpace([{ ...two, name: "Renamed" }], { id: "s2", name: "Ops" }).id,
+    "s2",
+  );
+  // A closed space is found by its name.
+  assert.equal(sendSpace([one, two], { id: "gone", name: "Ops" }), two);
+  // A space on another machine is ignored, by id and by name.
+  assert.equal(sendSpace([far], { id: "vps/s3", name: "space" }), null);
+  assert.equal(sendSpace([far], null), null);
+  // No setting: the local space "space".
+  assert.equal(sendSpace([far, two, one], undefined), one);
+
+  const item = toItem(match(ch("eng"), "1.000001"));
+  const [c, a] = sendCommand([far], "/h", item, ["claude"], "task");
+  assert.equal(c, "space.new");
+  assert.deepEqual([a.name, a.folder], ["space", "/h/code"]);
+  const [c2, a2] = sendCommand([], "/h", item, ["claude"], "task", {
+    name: "Ops",
+    folder: "~/work/ops",
+  });
+  assert.equal(c2, "space.new");
+  assert.deepEqual([a2.name, a2.folder], ["Ops", "/h/work/ops"]);
+  const [c3, a3] = sendCommand([], "/h", item, ["claude"], "task", {
+    folder: "work",
+  });
+  assert.equal(c3, null);
+  assert.match(a3.error, /not a full path/);
+});
+
+test("send to space: the folder is absolute after ~ expansion", () => {
+  assert.equal(expandFolder("~", "/h"), "/h");
+  assert.equal(expandFolder("~/code", "/h"), "/h/code");
+  assert.equal(expandFolder(" /srv/x ", "/h"), "/srv/x");
+  assert.equal(expandFolder("", "/h"), "/h/code");
+  assert.equal(expandFolder(null, "/h"), "/h/code");
+  for (const bad of ["code", "./code", "~other/code", "$HOME/code"])
+    assert.equal(expandFolder(bad, "/h"), null, bad);
+});
+
+test("send to space: a new space saves its id; an open one is never made again", async () => {
+  const item = toItem(match(ch("eng"), "1.000001"));
+  const run = async (spaces, space, stdout = "{}") => {
+    const calls = [],
+      saved = [];
+    const ok = await sendToAgent(item, {
+      spaces,
+      home: "/h",
+      exec: async (cmd, args) => {
+        calls.push([cmd, ...args]);
+        return { code: 0, stdout, stderr: "" };
+      },
+      notify: (n) => assert.fail(n.body),
+      markSeen: () => {},
+      settings: { agent: "claude", model: "", space },
+      agents: AGENTS,
+      saveSpace: (s) => saved.push(s),
+    });
+    assert.equal(ok, true);
+    return { calls, saved };
+  };
+  // Nothing matches: mkdir the folder, make the space, save the new id.
+  const made = await run(
+    [{ id: "vps/s9", name: "Ops", machine: "vps" }],
+    { id: "gone", name: "Ops", folder: "~/ops" },
+    '{ "space": "s7", "tab": "t", "terminal": "t9" }',
+  );
+  assert.deepEqual(made.calls[0], ["mkdir", "-p", "/h/ops"]);
+  assert.equal(made.calls[1][2], "space.new");
+  assert.deepEqual(JSON.parse(made.calls[1][3]).folder, "/h/ops");
+  assert.deepEqual(made.saved, [{ id: "s7", name: "Ops", folder: "~/ops" }]);
+  // The stored space is open under a new name: a tab there, no mkdir, nothing saved.
+  const open = await run([{ id: "s7", name: "Renamed", machine: null }], {
+    id: "s7",
+    name: "Ops",
+    folder: "~/ops",
+  });
+  assert.equal(open.calls.length, 1);
+  assert.equal(open.calls[0][2], "tab.new");
+  assert.equal(JSON.parse(open.calls[0][3]).space, "s7");
+  assert.deepEqual(open.saved, []);
+  // Found by name: its id is saved, so a later rename keeps it.
+  const named = await run(
+    [{ id: "s8", name: "space", machine: null }],
+    undefined,
+  );
+  assert.equal(named.calls[0][2], "tab.new");
+  assert.deepEqual(named.saved, [
+    { id: "s8", name: "space", folder: "~/code" },
+  ]);
+  // A folder that is not a full path stops before anything runs.
+  const notes = [];
+  assert.equal(
+    await sendToAgent(item, {
+      spaces: [],
+      home: "/h",
+      exec: () => assert.fail("ran a command"),
+      notify: (n) => notes.push(n),
+      markSeen: () => assert.fail("marked seen"),
+      settings: { space: { name: "Ops", folder: "ops" } },
+      agents: AGENTS,
+    }),
+    false,
+  );
+  assert.match(notes[0].body, /not a full path/);
 });
 
 const AGENTS = [

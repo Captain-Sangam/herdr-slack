@@ -86,16 +86,16 @@ sequenceDiagram
 
 Every copy of every mod can read these keys. Herdr keeps them in `~/.config/herdr-app/shared.json`. A `setShared` call draws every mod again, so the poller writes a key only when its value changed.
 
-| Key                | Written by            | Content                                                                                       |
-| ------------------ | --------------------- | --------------------------------------------------------------------------------------------- |
-| `slack.items`      | Button copy           | Up to 150 items: ids, conversation, sender, preview, permalink, read flag, image references.  |
-| `slack.status`     | Button copy           | `{state, message}`. `state` is `ok`, `no-token`, `auth`, `ratelimited`, `network` or `error`. |
-| `slack.me`         | Button copy           | The user id of the token, from `auth.test`.                                                   |
-| `slack.seen`       | Panel copy            | Ids of items opened, sent or dismissed in the panel. Pruned to the listed items.              |
-| `slack.dismissed`  | Panel copy            | Ids of dismissed items. Pruned to the listed items.                                           |
-| `slack.filters`    | Panel copy            | `{include, exclude}` pattern lists.                                                           |
-| `slack.agent`      | Panel copy            | `{agent, model}` for Send to agent. `agent` is a `knownAgents()` key.                         |
-| `workspace.panels` | Herdr, plus `"slack"` | The panel ids that Herdr's `tabs` mod restores for each space.                                |
+| Key                | Written by            | Content                                                                                                       |
+| ------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `slack.items`      | Button copy           | Up to 150 items: ids, conversation, sender, preview, permalink, read flag, image references.                  |
+| `slack.status`     | Button copy           | `{state, message}`. `state` is `ok`, `no-token`, `auth`, `ratelimited`, `network` or `error`.                 |
+| `slack.me`         | Button copy           | The user id of the token, from `auth.test`.                                                                   |
+| `slack.seen`       | Panel copy            | Ids of items opened, sent or dismissed in the panel. Pruned to the listed items.                              |
+| `slack.dismissed`  | Panel copy            | Ids of dismissed items. Pruned to the listed items.                                                           |
+| `slack.filters`    | Panel copy            | `{include, exclude}` pattern lists.                                                                           |
+| `slack.agent`      | Panel copy            | `{agent, model, space}` for Send to agent. `agent` is a `knownAgents()` key. `space` is `{id, name, folder}`. |
+| `workspace.panels` | Herdr, plus `"slack"` | The panel ids that Herdr's `tabs` mod restores for each space.                                                |
 
 ### 3.3 Storage for each copy
 
@@ -223,19 +223,23 @@ sequenceDiagram
   participant A as Agent
   P->>P: agentArgv from slack.agent
   P->>S: thread or messages around, not for Claude
-  P->>P: mkdir -p ~/code
-  P->>H: tab.new in space "space", or space.new
+  P->>P: sendSpace: stored id, else stored name
+  P->>P: mkdir -p the folder, only for space.new
+  P->>H: tab.new in that space, or space.new
   H->>A: start the agent with the task
   H-->>P: result, or error and exit 1
-  P->>P: mark seen on success, else toast
+  P->>P: mark seen and save the space id on success, else toast
 ```
 
 - Only one send runs at a time.
-- The settings are in `shared("slack.agent")`, `{agent, model}`. The gear opens them, under the filters:
+- The settings are in `shared("slack.agent")`, `{agent, model, space}`. The gear opens them, under the filters:
   - the agent: a chip for each installed agent from `knownAgents()`, Claude by default
   - the model: a text field with suggestions. Empty means the agent's own default.
+  - the space ([ADR 0014](adr/0014-send-to-space-setting.md)): a chip for each open space on this computer, or "New space…" with a name, a folder and "Choose…" (`pickFolder()`). The default is `space` at `~/code`.
+- `sendSpace()` finds the target: the open local space with the stored `id`, else one with the stored `name`. If none is open, Send makes the space with `space.new` at the stored folder. After a successful send, the panel saves the id of the space that it used, so a rename keeps the target.
+- `expandFolder()` expands `~` and refuses a folder that is not a full path.
 - `agentArgv()` builds the argv from the agent's own `run` argv and its model flag: `--model` for Claude, `-m` for Codex, none for other agents. It refuses an agent that is not installed and a model with other characters than letters, digits, `.`, `-`, `_` and `/`.
-- The space name `space` and the folder `~/code` are constants in `mods/slack/lib.js`. So are the defaults `AGENT` and the suggestions `MODELS`.
+- The defaults `SPACE` (`space` at `~/code`) and `AGENT`, and the suggestions `MODELS`, are constants in `mods/slack/lib.js`.
 - The task for Claude holds the permalink, the channel id and name, `ts`, `thread_ts`, the sender and the preview. Claude reads Slack with its own connector.
 - The task for another agent holds the same lines and the conversation itself:
   - The panel fetches it as the view does: the thread, else the 15 messages up to the item and the 10 after it.

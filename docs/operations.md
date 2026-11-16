@@ -91,6 +91,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 | The agent "codex" is not installed. | The chosen agent is not in `knownAgents()` as installed.                     | Install the agent, or pick another one under the gear.                  |
 | The model "…" is not valid          | The model has a character other than letters, digits, `.`, `-`, `_` and `/`. | Fix the model under the gear. The field does not save an invalid value. |
 | `herdr-app` errors                  | `herdr-app do` failed, for example a missing folder.                         | Read the message. Run `herdr-app status`.                               |
+| The folder "…" is not a full path   | The stored space folder does not start with `/` or `~/`.                     | Set the space again under the gear.                                     |
 
 - To see the settings: `jq '."slack.agent"' ~/.config/herdr-app/shared.json`.
 - An agent other than Claude gets the conversation in the task. If the task says "The conversation could not be loaded", the fetch failed. The usual cause is a missing `*:history` scope.
