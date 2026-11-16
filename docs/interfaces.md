@@ -2,7 +2,7 @@
 
 This page lists the outside facts that the code depends on. They come from Herdr, the Slack Web API, the Claude Code status line and the Codex session logs. If one of them changes, the code must change too.
 
-- **Checked against:** Herdr.app 0.1.15, the Slack Web API, Claude Code and Codex as of 2026-11-15.
+- **Checked against:** Herdr.app 0.1.15, the Slack Web API, Claude Code and Codex as of 2026-11-16.
 - **Related:** [architecture](architecture.md), [operations](operations.md).
 
 ## 1. Herdr
@@ -88,24 +88,27 @@ The usage meter runs these for the probe:
 
 All calls send the user token in an `Authorization: Bearer` header. The reads are `GET https://slack.com/api/<method>`. The only write is `POST https://slack.com/api/chat.postMessage` with a JSON body.
 
-| Method                  | Caller        | Parameters                                                    | Scopes                                                             |
-| ----------------------- | ------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `auth.test`             | Button        | None                                                          | None                                                               |
-| `search.messages`       | Button        | `query`, `sort=timestamp`, `sort_dir=desc`, `count=50`        | `search:read`                                                      |
-| `users.info`            | Button, panel | `user`                                                        | `users:read`                                                       |
-| `conversations.info`    | Button, panel | `channel`                                                     | `channels:read`, `groups:read`, `im:read`, `mpim:read`             |
-| `conversations.members` | Button        | `channel`, `limit=50`                                         | `mpim:read`                                                        |
-| `conversations.history` | Panel         | `channel`, `limit`, `cursor`, `latest`, `oldest`, `inclusive` | `channels:history`, `groups:history`, `im:history`, `mpim:history` |
-|                         |               | Also for Send to agent to another agent than Claude           |                                                                    |
-| `conversations.replies` | Panel         | `channel`, `ts`, `limit=200`, `cursor`                        | The same `*:history` scopes                                        |
-| File thumbnail URLs     | Button, panel | `GET` on `thumb_360` (or the nearest size)                    | `files:read`                                                       |
-| `chat.postMessage`      | Panel         | JSON: `channel`, `text`, `thread_ts` for a thread reply       | `chat:write`                                                       |
+| Method                  | Caller        | Parameters                                                       | Scopes                                                             |
+| ----------------------- | ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `auth.test`             | Button        | None                                                             | None                                                               |
+| `search.messages`       | Button        | `query`, `sort=timestamp`, `sort_dir=desc`, `count=50`           | `search:read`                                                      |
+| `users.info`            | Button, panel | `user`                                                           | `users:read`                                                       |
+| `conversations.info`    | Button, panel | `channel`                                                        | `channels:read`, `groups:read`, `im:read`, `mpim:read`             |
+| `conversations.members` | Button        | `channel`, `limit=50`                                            | `mpim:read`                                                        |
+| `conversations.history` | Panel         | `channel`, `limit`, `cursor`, `latest`, `oldest`, `inclusive`    | `channels:history`, `groups:history`, `im:history`, `mpim:history` |
+|                         |               | Also for Send to agent to another agent than Claude              |                                                                    |
+| `conversations.replies` | Button, panel | `channel`, `ts`, `limit=200` (`limit=1` in the button), `cursor` | The same `*:history` scopes                                        |
+| File thumbnail URLs     | Button, panel | `GET` on `thumb_360` (or the nearest size)                       | `files:read`                                                       |
+| `chat.postMessage`      | Panel         | JSON: `channel`, `text`, `thread_ts` for a thread reply          | `chat:write`                                                       |
 
 - The two search queries are `<@USER_ID>` (mentions) and `to:me` (DMs and group DMs). `USER_ID` comes from `auth.test`.
 - `slack-app-manifest.yaml` asks for exactly the scopes in this table. All of them are read scopes except `chat:write`.
 - `chat.postMessage` with a user token posts as that user. The body is `application/json; charset=utf-8`. The text goes as typed: Slack escapes `<`, `>` and `&` itself.
 - Its answer has `ts` and `message`. The view shows that message at once.
 - The app has no bot user, and token rotation is off, so the user token does not expire.
+- `conversations.info` and `conversations.replies` are Tier 3 methods: 50+ calls each minute. The poller makes at most 30 `conversations.info` calls and 20 `conversations.replies` calls in each poll.
+- `conversations.replies` with `limit=1` returns the parent and the first reply.
+- `last_read` moves forward when you read in Slack, and back after "Mark unread".
 
 ### 2.2 Fields the code reads
 
@@ -117,6 +120,7 @@ All calls send the user token in an `Authorization: Bearer` header. The reads ar
 | `conversations.info`                | `channel.last_read`, `channel.name`, `channel.is_im`                                                                                                                                |
 | `conversations.members`             | `members`                                                                                                                                                                           |
 | `conversations.history`, `.replies` | `messages[]` (as above, plus `reply_count`, `reactions`, `user_profile`), `has_more`, `response_metadata.next_cursor`                                                               |
+| `conversations.replies`, parent     | `last_read`: the user's read mark for the thread. Present only while the user follows the thread (`subscribed: true`). The parent has no `unread_count`.                            |
 
 ### 2.3 Message format
 

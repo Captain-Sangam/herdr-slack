@@ -100,7 +100,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - On failure, the text stays and Slack's error shows on one line. Nothing retries the post.
   - Esc with an empty composer goes back. With text, the first Esc only takes the focus off the composer.
   - Each conversation keeps its own draft in memory while Herdr runs. Drafts never go into `shared`.
-- **Unread state:** a DM or top-level message is unread until Slack's read mark passes it, or until you open, send or dismiss it here. A thread reply is unread until you open, send or dismiss it here.
+- **Unread state:** a message is unread until Slack's read mark passes it, or until you open, send or dismiss it here. A DM or top-level message uses its conversation's `last_read` (`conversations.info`). A thread reply uses its thread's `last_read` (the parent in `conversations.replies`, `limit=1`). Each poll fetches at most 20 marks, least recently checked first, marks with unread items first. A mark that moves back (Mark unread in Slack) makes its items unread here again.
 - **Errors:** no token, a refused token, a rate limit and no network each show a short `dim` message in the panel. The last items stay. A rate limit waits 60 s, then twice as long each time, up to 10 min.
 
 ## Built from

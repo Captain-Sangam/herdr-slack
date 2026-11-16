@@ -101,7 +101,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 **Symptom:** the status is `ratelimited`. The message tells when the next try is.
 
 - The poller waits 1 min, then 2, 4 and 8 min, then 10 min for each next failure. One successful poll sets the wait back to zero.
-- A poll makes 2 searches, and at most 40 lookups: 10 each for `last_read`, new people, group DM members and channel names.
+- A poll makes 2 searches and at most 50 lookups. 20 are read marks (`last_read`). 10 each are for new people, group DM members and channel names.
 - A reload of the mod (for example `./install.sh`) also sets the wait back to zero. Do not reload in a loop to skip the wait.
 
 ## 7. Stale usage and the probe
@@ -178,7 +178,8 @@ The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architectu
 ## 10. Known limits
 
 - Each search gets the newest 50 matches each minute. If more than 50 matches arrive in one minute, the panel misses some.
-- A thread reply stays unread until you open it in the panel, even if you read it in Slack.
+- A message that you read in Slack clears in the panel within 1 or 2 polls (about 1 to 2 min). With more than 40 read marks that have unread items, it can take longer.
+- A reply in a thread that you do not follow in Slack stays unread until you open it in the panel. Slack gives no `last_read` for that thread.
 - Custom workspace emoji show as `:name:` text. The list dims them. The conversation view does not.
 - A nested bullet under a numbered line shows as its own list.
 - A channel mention written as `<#C123>` shows its id if the token cannot see that channel.

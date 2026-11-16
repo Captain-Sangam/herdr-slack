@@ -35,7 +35,9 @@ import {
   toItem,
   merge,
   markRead,
-  staleConversations,
+  markKey,
+  staleMarks,
+  unmarked,
   pruneSeen,
   unreadCount,
   userIds,
@@ -118,7 +120,8 @@ export default class Slack extends View {
     this.delay = 0; // backoff, ms
     this.until = 0;
     // Kept across reloads, so unread counts are right before fresh values arrive.
-    this.lastRead = JSON.parse(localStorage.getItem("lastRead") ?? "{}"); // channel id -> last_read ts
+    this.lastRead = JSON.parse(localStorage.getItem("lastRead") ?? "{}"); // markKey -> last_read ts
+    this.checked = {}; // markKey -> time of the last fetch, ms
     this.channels = JSON.parse(localStorage.getItem("channels") ?? "{}"); // channel id -> name (null: not visible)
     this.members = JSON.parse(localStorage.getItem("members") ?? "{}"); // group DM id -> member ids
     this.people = JSON.parse(localStorage.getItem("people") ?? "{}"); // id -> {name, image}
@@ -294,25 +297,32 @@ export default class Slack extends View {
     return ok;
   }
 
-  // Decision 7: last_read for at most 10 conversations with unread top-level items.
-  // The same call names the channel, for mentions written as <#C123>.
-  async refreshLastRead(channels, list) {
-    for (const ch of channels) {
+  // ADR 0013: read marks, least recently checked first. A conversation's last_read comes
+  // from conversations.info, which also names the channel for mentions written as <#C123>.
+  // A thread's comes from its parent in conversations.replies, set while you follow the thread.
+  async refreshMarks(keys, list) {
+    for (const k of keys) {
+      const [ch, thread] = k.split(":");
+      this.checked[k] = Date.now();
+      if (thread) {
+        const r = await this.optional("conversations.replies", {
+          channel: ch,
+          ts: thread,
+          limit: 1,
+        });
+        const mark = r?.messages?.find((m) => m.ts === thread)?.last_read;
+        if (mark != null) this.lastRead[k] = mark;
+        continue;
+      }
       const r = await this.optional("conversations.info", { channel: ch });
       if (!r?.channel) continue;
-      if (!this.loggedLastRead) {
-        this.loggedLastRead = true;
-        console.log(
-          `slack: conversations.info last_read ${r.channel.last_read != null ? "returned" : "missing"}`,
-        );
-      }
-      if (r.channel.last_read != null) this.lastRead[ch] = r.channel.last_read;
+      if (r.channel.last_read != null) this.lastRead[k] = r.channel.last_read;
       if (r.channel.name && !r.channel.is_im)
         this.channels[ch] = r.channel.name;
     }
-    const keep = new Set(list.map((i) => i.ch));
-    for (const ch of Object.keys(this.lastRead))
-      if (!keep.has(ch)) delete this.lastRead[ch];
+    const keep = new Set(list.map(markKey));
+    for (const map of [this.lastRead, this.checked])
+      for (const k of Object.keys(map)) if (!keep.has(k)) delete map[k];
     localStorage.setItem("lastRead", JSON.stringify(this.lastRead));
   }
 
@@ -420,22 +430,35 @@ export default class Slack extends View {
             toItem(m, { names, images, members: this.members, aliases, me }),
           ),
         ];
-        const seen = seenSet();
-        let list = markRead(merge(items(), fresh, filters()), this.lastRead);
-        await this.refreshLastRead(staleConversations(list, seen), list);
-        list = await this.syncImages(markRead(list, this.lastRead));
+        const before = markRead(
+            merge(items(), fresh, filters()),
+            this.lastRead,
+          ),
+          dismissed = dismissedSet();
+        await this.refreshMarks(
+          staleMarks(
+            before.filter((i) => !dismissed.has(i.id)),
+            seenSet(),
+            this.checked,
+          ),
+          before,
+        );
+        let list = markRead(before, this.lastRead);
+        const back = new Set(unmarked(before, list));
+        list = await this.syncImages(list);
         // Decision 4: publish only when the list changed; setShared re-renders every mod.
         const json = JSON.stringify(list);
         if (json !== this.published) {
           this.published = json;
           setShared("slack.items", list);
         }
-        const pruned = pruneSeen([...seen], list);
-        if (pruned.length !== seen.size) setShared("slack.seen", pruned);
-        const dismissed = shared("slack.dismissed") ?? [],
-          kept = pruneSeen(dismissed, list);
-        if (kept.length !== dismissed.length)
-          setShared("slack.dismissed", kept);
+        // Read again here: the panel may have added ids during the lookups.
+        const seen = shared("slack.seen") ?? [],
+          pruned = pruneSeen(seen, list).filter((id) => !back.has(id));
+        if (pruned.length !== seen.length) setShared("slack.seen", pruned);
+        const hidden = shared("slack.dismissed") ?? [],
+          kept = pruneSeen(hidden, list);
+        if (kept.length !== hidden.length) setShared("slack.dismissed", kept);
         this.delay = 0;
         this.setStatus("ok");
       } catch (e) {

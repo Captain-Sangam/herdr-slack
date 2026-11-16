@@ -529,24 +529,46 @@ export function merge(previous, fresh, filters, limit = LIMIT) {
     .slice(0, limit);
 }
 
-// Decision 7: a top-level message is read once its conversation's last_read reaches it.
-// Thread replies do not move last_read, so they stay unread until seen here.
+// ADR 0013: an item's read mark. A thread reply's is its thread's last_read (the parent
+// message in conversations.replies); any other item's is its conversation's (conversations.info).
+export const markKey = (i) => (i.thread ? `${i.ch}:${i.thread}` : i.ch);
+
+// An item is read once its read mark reaches it. The mark is Slack's latest value,
+// so it follows Slack both ways: forward, and back after "Mark unread".
 export function markRead(items, lastRead) {
   return items.map((i) => {
-    const mark = lastRead[i.ch];
-    return { ...i, read: !i.thread && mark != null && tsCmp(i.ts, mark) <= 0 };
+    const mark = lastRead[markKey(i)];
+    return { ...i, read: mark != null && tsCmp(i.ts, mark) <= 0 };
   });
 }
 
 export const unread = (item, seen) => !item.read && !seen.has(item.id);
 
-// Conversations whose last_read could clear an unread top-level item, newest first.
-export function staleConversations(items, seen, max = 10) {
-  const out = [];
-  for (const i of items)
-    if (unread(i, seen) && !i.thread && !out.includes(i.ch)) out.push(i.ch);
-  return out.slice(0, max);
+// Read marks to fetch in this poll, at most `max`. The least recently checked go first,
+// so no mark starves. A mark with no unread item counts as checked `grace` ms later:
+// it is checked less often, but still is, for a "Mark unread" in Slack.
+export function staleMarks(
+  items,
+  seen,
+  checked = {},
+  max = 20,
+  grace = 600000,
+) {
+  const due = new Map();
+  for (const i of items) {
+    const k = markKey(i),
+      at = (checked[k] ?? 0) + (unread(i, seen) ? 0 : grace);
+    due.set(k, Math.min(due.get(k) ?? Infinity, at));
+  }
+  return [...due]
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, max)
+    .map(([k]) => k);
 }
+
+// Ids that a read mark moving back in Slack made unread again. They leave slack.seen.
+export const unmarked = (before, after) =>
+  after.filter((i, n) => before[n].read && !i.read).map((i) => i.id);
 
 export const pruneSeen = (seen, items) => {
   const ids = new Set(items.map((i) => i.id));
