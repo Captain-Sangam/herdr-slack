@@ -865,6 +865,34 @@ export const replyError = (code) =>
 export const backoff = (previous) =>
   previous ? Math.min(previous * 2, 600000) : 60000;
 
+// A manual refresh. The poller lives in the button copy (ADR 0003): the panel writes
+// shared("slack.refresh") = {req}, and the button copy answers with
+// shared("slack.polled") = {req, at} when the poll that covers the request ends.
+export const REFRESH_GAP = 10000; // at most one manual refresh in 10 s
+export const REFRESH_WAIT = 30000; // an unanswered request stops spinning after this
+const secs = (ms) => Math.max(1, Math.ceil(ms / 1000));
+
+// What a click does: "busy" (one runs: nothing new), "wait" (Slack's backoff or the
+// cooldown, with the text to show) or "go". `text` is also the button's tooltip.
+export function refreshGate({ now, busy = false, last = 0, until = 0 }) {
+  if (busy) return { act: "busy", text: "Refreshing…" };
+  if (now < until)
+    return {
+      act: "wait",
+      text: `Slack asked to wait, retry in ${secs(until - now)} s`,
+    };
+  if (now - last < REFRESH_GAP)
+    return {
+      act: "wait",
+      text: `Refreshed just now, retry in ${secs(REFRESH_GAP - (now - last))} s`,
+    };
+  return { act: "go", text: "Refresh" };
+}
+
+// The panel's request is in flight: sent, not answered yet, and not too old.
+export const refreshBusy = (req, polled, now) =>
+  Boolean(req && req > (polled?.req ?? 0) && now - req < REFRESH_WAIT);
+
 // "now", "5m", "3h", "2d".
 export function ago(ts, now) {
   const s = Math.max(

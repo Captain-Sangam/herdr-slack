@@ -42,6 +42,7 @@ The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure
 
 - **Hot reload:** Herdr reloads a mod when a file in `~/.config/herdr-app/mods/<name>/` changes. `./install.sh` copies the repo's mods there, so each install reloads the running copies. Change the repo, not the installed copy.
 - **Checks:** after each mod change, run `./install.sh`, then `herdr-app check` on the mod and `herdr-app status`. A broken save keeps the old version running, so a screen that still works is no proof.
+- **Scratch mods:** all mods run in one shared JavaScript runtime. A scratch or fixture copy must never change globals (`globalThis.fetch`, `globalThis.exec` or any other). Stub inside the copy's own module instead. A changed global breaks every running mod, and only a restart of Herdr undoes it.
 - **Shipped Herdr files:** never edit them. These include `layouts/main.json`, the shipped mods, and the `AGENTS.md` and `.d.ts` files in `~/.config/herdr-app`. Change Herdr only through `install.sh` and the files that it writes.
 - **Slack token:** never put it in argv, a file, `shared`, `localStorage`, a log, the agent task or a commit. Read it from the Keychain. Send it only in an `Authorization` header, or to `curl` on stdin. Never print it.
 - **Personal data:** the repo is public. Use invented data, as in `test/` and `docs/assets/` ([testing](docs/testing.md#6-screenshots-for-the-docs)). Never commit any of these:

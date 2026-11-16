@@ -36,6 +36,7 @@ The screens show invented people, channels and numbers. They come from the real 
 - **Slack panel**, in the right-hand panel stack:
   - Your DMs, group DMs and mentions, one row for each conversation or thread, with photos and unread counts.
   - Tabs for All, Mentions and DMs, and an Unread toggle.
+  - A refresh button in the header: it polls Slack now, or loads the open conversation again. At most one refresh in 10 s, and none while Slack asks to wait.
   - Include and exclude filters with `*` and `?` patterns.
   - A conversation view: DM history, threads, and the messages around a mention, with images, files and reactions.
   - A reply composer at the bottom of the view. Enter sends, Shift+Enter adds a line. A reply goes to the DM, the group DM or the thread. For a channel mention outside a thread, it starts a thread under the mention.

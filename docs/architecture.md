@@ -82,20 +82,48 @@ sequenceDiagram
 - Lookups have caps for each poll: 10 new people, 10 group DM member lists, 10 channel names and 20 read marks (`last_read` values).
 - Only one poll runs at a time.
 
+#### Refresh now
+
+The refresh button in the panel header asks the poller for a poll now. The panel copy cannot poll: the poller and the token live in the button copy.
+
+```mermaid
+sequenceDiagram
+  participant P as Panel copy
+  participant SH as Herdr shared state
+  participant B as Button copy
+  P->>P: refreshGate: busy, backoff, 10 s cooldown
+  P->>SH: slack.refresh {req}
+  B->>SH: reads slack.refresh each second
+  B->>B: one poll, as the 60 s poll
+  B->>SH: slack.polled {req, at}
+  SH-->>P: draw again: the spinner stops, "Updated just now"
+```
+
+- `refreshGate()` in `lib.js` decides what a click does. A refresh in flight gives `busy`: nothing new, and the icon keeps spinning. Slack's backoff (`slack.status.until`) gives "Slack asked to wait, retry in N s". A click less than 10 s after the last manual refresh gives the wait. Else the panel writes `slack.refresh`.
+- The button copy reads `shared("slack.refresh")` once a second with a `cx.timer` from `init`. A task that `render` starts never runs, so the copy cannot react in `render`. The check only reads one value.
+- A request while a poll runs gets the answer when that poll ends. It starts no second poll. A request during the backoff gets an answer at once, with no poll.
+- `refreshBusy()` is true from the request to the answer, for at most 30 s. Without a button copy the spinner stops after 30 s.
+- The icon spins with the native `svg(...).spin(900)`. No timer draws it.
+- "Updated just now" shows for 4 s next to the button after a poll with status `ok`. A failed poll shows its message on the status line, as before.
+- In the conversation view the same button loads the view again (`loadView`). The view stays where it is, unless it is at the bottom and new messages came. The same gate applies, with the view's own load as `busy`. The icon also spins during the 60 s reload of the view.
+- The 60 s timers do not change.
+
 ### 3.2 Shared state
 
 Every copy of every mod can read these keys. Herdr keeps them in `~/.config/herdr-app/shared.json`. A `setShared` call draws every mod again, so the poller writes a key only when its value changed.
 
-| Key                | Written by            | Content                                                                                                       |
-| ------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `slack.items`      | Button copy           | Up to 150 items: ids, conversation, sender, preview, permalink, read flag, image references.                  |
-| `slack.status`     | Button copy           | `{state, message}`. `state` is `ok`, `no-token`, `auth`, `ratelimited`, `network` or `error`.                 |
-| `slack.me`         | Button copy           | The user id of the token, from `auth.test`.                                                                   |
-| `slack.seen`       | Panel copy            | Ids of items opened, sent or dismissed in the panel. Pruned to the listed items.                              |
-| `slack.dismissed`  | Panel copy            | Ids of dismissed items. Pruned to the listed items.                                                           |
-| `slack.filters`    | Panel copy            | `{include, exclude}` pattern lists.                                                                           |
-| `slack.agent`      | Panel copy            | `{agent, model, space}` for Send to agent. `agent` is a `knownAgents()` key. `space` is `{id, name, folder}`. |
-| `workspace.panels` | Herdr, plus `"slack"` | The panel ids that Herdr's `tabs` mod restores for each space.                                                |
+| Key                | Written by            | Content                                                                                                                                     |
+| ------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `slack.items`      | Button copy           | Up to 150 items: ids, conversation, sender, preview, permalink, read flag, image references.                                                |
+| `slack.status`     | Button copy           | `{state, message}`, and `until` (ms) while Slack's backoff lasts. `state` is `ok`, `no-token`, `auth`, `ratelimited`, `network` or `error`. |
+| `slack.refresh`    | Panel copy            | `{req}`: the time (ms) of the last manual refresh request.                                                                                  |
+| `slack.polled`     | Button copy           | `{req, at}`: the request that the last poll answered, and when.                                                                             |
+| `slack.me`         | Button copy           | The user id of the token, from `auth.test`.                                                                                                 |
+| `slack.seen`       | Panel copy            | Ids of items opened, sent or dismissed in the panel. Pruned to the listed items.                                                            |
+| `slack.dismissed`  | Panel copy            | Ids of dismissed items. Pruned to the listed items.                                                                                         |
+| `slack.filters`    | Panel copy            | `{include, exclude}` pattern lists.                                                                                                         |
+| `slack.agent`      | Panel copy            | `{agent, model, space}` for Send to agent. `agent` is a `knownAgents()` key. `space` is `{id, name, folder}`.                               |
+| `workspace.panels` | Herdr, plus `"slack"` | The panel ids that Herdr's `tabs` mod restores for each space.                                                                              |
 
 ### 3.3 Storage for each copy
 
@@ -206,7 +234,7 @@ sequenceDiagram
 - A failed post keeps the text and shows one line over the composer. Nothing retries it.
 - A successful post clears the composer, adds the message to the view at once, marks the row seen and loads the view again. A reply under a mention outside a thread opens that thread.
 - Each target has its own composer and draft, in the panel copy's memory. A mention's view and its thread share one. Back releases a composer only when it is empty.
-- An open view loads again every 60 s.
+- An open view loads again every 60 s, and on a click on the refresh button.
 - The messages of the view stay in the panel copy's memory. They never go into `shared`.
 
 ### 3.8 Send to agent

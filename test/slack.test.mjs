@@ -31,6 +31,10 @@ import {
   contextText,
   sendSpace,
   expandFolder,
+  refreshGate,
+  refreshBusy,
+  REFRESH_GAP,
+  REFRESH_WAIT,
 } from "../mods/slack/lib.js";
 
 const ME = "U0ME"; // the token's own user id, as auth.test reports it
@@ -458,6 +462,41 @@ test("backoff doubles from 60 s up to 10 min", () => {
   let b = 0;
   for (let n = 0; n < 6; n++) steps.push((b = backoff(b)));
   assert.deepEqual(steps, [60000, 120000, 240000, 480000, 600000, 600000]);
+});
+
+test("refresh: busy first, then Slack's backoff, then the 10 s cooldown", () => {
+  const now = 1_000_000;
+  // Nothing in the way: go.
+  assert.equal(refreshGate({ now }).act, "go");
+  assert.equal(refreshGate({ now, last: now - REFRESH_GAP }).act, "go");
+  // In flight: nothing new, whatever else is true.
+  assert.deepEqual(
+    refreshGate({ now, busy: true, last: now, until: now + 5000 }),
+    { act: "busy", text: "Refreshing…" },
+  );
+  // Slack's backoff wins over the cooldown, and says how long.
+  assert.deepEqual(refreshGate({ now, last: now - 1000, until: now + 42001 }), {
+    act: "wait",
+    text: "Slack asked to wait, retry in 43 s",
+  });
+  assert.equal(refreshGate({ now, until: now }).act, "go");
+  // The cooldown: at most one manual refresh in 10 s.
+  const soon = refreshGate({ now, last: now - 2500 });
+  assert.equal(soon.act, "wait");
+  assert.match(soon.text, /retry in 8 s/);
+  assert.match(refreshGate({ now, last: now - 9999 }).text, /retry in 1 s/);
+});
+
+test("refresh: a request is busy until answered, and not forever", () => {
+  const now = 1_000_000;
+  assert.equal(refreshBusy(0, null, now), false);
+  assert.equal(refreshBusy(now - 100, null, now), true);
+  assert.equal(refreshBusy(now - 100, { req: now - 5000 }, now), true);
+  assert.equal(refreshBusy(now - 100, { req: now - 100, at: now }, now), false);
+  // An answer to a newer request covers an older one.
+  assert.equal(refreshBusy(now - 100, { req: now }, now), false);
+  // No button copy to answer: the spinner stops.
+  assert.equal(refreshBusy(now - REFRESH_WAIT, null, now), false);
 });
 
 test("send command: a tab in an open space, else the space at ~/code", () => {
