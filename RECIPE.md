@@ -1,8 +1,8 @@
-# herdr-slack
+# Slack for Herdr
 
 Herdr's own window with two additions. A usage meter sits above Settings in the sidebar and shows Claude 5-hour, Claude 7-day and Codex use. A Slack button sits right of Files and Changes in the tab bar and opens a Slack panel in the right-hand panel stack. The panel lists your DMs, group DMs and mentions, one row for each conversation or thread. It reads a conversation in place, replies when you click Send, and sends a message to a Claude Code agent with one click. Nothing else in Slack changes.
 
-![herdr-slack](preview.png)
+![Slack for Herdr](preview.png)
 
 ## What you see
 
