@@ -28,14 +28,18 @@ Details: [architecture, token and privacy model](docs/architecture.md#5-token-an
 
 ## Scopes and posts
 
-- `slack-app-manifest.yaml` asks for read scopes and one write scope:
+- `slack-app-manifest.yaml` asks for read scopes and five write scopes:
   - read: `search:read`, `users:read`, `files:read`, and the `*:read` and `*:history` scopes for channels, private channels, DMs and group DMs
-  - write: `chat:write`, for replies from the composer ([ADR 0011](docs/adr/0011-replies-from-the-conversation-view.md)).
+  - write: `chat:write`, for replies from the composer ([ADR 0011](docs/adr/0011-replies-from-the-conversation-view.md))
+  - write: `channels:write`, `groups:write`, `im:write` and `mpim:write`, for `conversations.mark` ([ADR 0015](docs/adr/0015-read-state-both-ways.md)).
 - WARNING: The token can post as you. Anything that reads the token can post in every conversation that you can post in.
+- WARNING: The `*:write` scopes give more than read marks. Anything that reads the token can also change your channels and conversations, for example create, rename, archive, join or leave them, and invite people. The mods use these scopes only for `conversations.mark`.
 - The code limits posts:
   - Only an explicit Send posts: the Send button, or Enter in the composer of the conversation view.
   - Nothing posts on its own. No timer, poll, retry or Slack content starts a post. A failed post stays failed until you send again.
-  - The only write call is `chat.postMessage`. The panel never adds reactions and never marks messages read.
+  - The write calls are `chat.postMessage` and `conversations.mark`. The panel never adds reactions.
+  - `conversations.mark` runs only while the "Mark read in Slack" switch is on. It runs after you open a DM, a group DM or a channel mention, and after your reply in a DM or group DM.
+  - A mark never goes past what the view showed, and never moves back. Slack content cannot start a mark.
   - Send to agent never gets the token. The agent cannot use the composer.
 - The app has no bot user. A reply comes from you, as in the Slack app.
 - Token rotation is off, so the token does not expire. Revoke it when you stop using herdr-slack.

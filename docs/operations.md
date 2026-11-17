@@ -23,7 +23,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 | `ok`          | Unread count, or no badge    | Nothing to do.                                                                    |
 | `no-token`    | A dot in the `blocked` color | [No token](#2-no-token)                                                           |
 | `auth`        | A dot in the `blocked` color | [`missing_scope` and other token errors](#3-missing_scope-and-other-token-errors) |
-| `ratelimited` | A dim dot                    | [`ratelimited`](#6-ratelimited)                                                   |
+| `ratelimited` | A dim dot                    | [`ratelimited`](#7-ratelimited)                                                   |
 | `network`     | A dim dot                    | Check the network. The poller tries again each minute.                            |
 | `error`       | A dim dot                    | Read the message. It has Slack's error code.                                      |
 
@@ -62,6 +62,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
   - `files:read`: message thumbnails do not show. Slack sends HTML instead of an image, and the mod deletes it. There is no banner.
   - `search:read`: the poll fails with `missing_scope`.
   - `chat:write`: a reply fails with "Needs the chat:write permission". The list and the view still work.
+  - `*:write` (`channels:write`, `groups:write`, `im:write`, `mpim:write`): the settings show "Needs write permission to mark read in Slack". Conversations stay unread in Slack. The list, the view and the replies still work.
 
 ## 4. A reply does not send
 
@@ -82,7 +83,23 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 - Nothing retries a failed post. Send it again yourself.
 - If Enter adds a line instead of sending, click Send. Then report it: the Enter binding depends on Herdr's input key context ([interfaces](interfaces.md#11-mod-api)).
 
-## 5. Send to agent
+## 5. A conversation stays unread in Slack
+
+**Symptom:** you opened or answered a conversation in the panel, and Slack still shows it unread.
+
+| Cause                                                                         | Fix                                                                                                                     |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| The settings show "Needs write permission to mark read in Slack".             | Add the `*:write` scopes and reinstall the app ([deployment](deployment.md#6-update)). Then turn the switch off and on. |
+| "Mark read in Slack" is off under the gear.                                   | Turn it on.                                                                                                             |
+| It is a thread.                                                               | Read it in Slack. The panel does not mark a thread read in Slack (known limit).                                         |
+| It is a channel, and newer messages came after the ones that the view showed. | Nothing to fix. The panel marks only up to the last message that the view showed.                                       |
+| You waited less than 10 s.                                                    | Wait. A mark waits 10 s, so an open and a quick reply make one call.                                                    |
+
+- A failed mark logs one line with Slack's error code only, for example `slack: conversations.mark not_in_channel`. Nothing shows in the view.
+- To see the marks that the panel set: `jq '."slack.marked"' ~/.config/herdr-app/shared.json`. Each entry is `{key, ts, at}`: the channel id, the read mark and the time in ms. It holds no text.
+- To see the switch: `jq '."slack.markRead"' ~/.config/herdr-app/shared.json`. `false` is off. `null` or `true` is on.
+
+## 6. Send to agent
 
 **Symptom:** an error toast "Send to agent failed". The item stays unread.
 
@@ -97,7 +114,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 - An agent other than Claude gets the conversation in the task. If the task says "The conversation could not be loaded", the fetch failed. The usual cause is a missing `*:history` scope.
 - To check what an agent gets, read the first message in its tab. It never holds the token.
 
-## 6. `ratelimited`
+## 7. `ratelimited`
 
 **Symptom:** the status is `ratelimited`. The message tells when the next try is. The refresh button says "Slack asked to wait, retry in N s" and does not poll.
 
@@ -116,7 +133,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 
 - To see a request and its answer: `jq '{refresh: ."slack.refresh", polled: ."slack.polled"}' ~/.config/herdr-app/shared.json`. After a working refresh, `polled.req` equals `refresh.req`.
 
-## 7. Stale usage and the probe
+## 8. Stale usage and the probe
 
 **Symptom:** a Claude row is dimmed, or shows a dash or `reset`.
 
@@ -146,7 +163,7 @@ This page tells how to find and fix problems with herdr-slack. Start with the st
 - If a manual probe fails, a toast shows the error. Make sure that `claude` starts in a new Herdr terminal.
 - For Codex, a dash means that no Codex session log of the last 8 days has a `token_count` event with `rate_limits`. Run one Codex turn.
 
-## 8. The image cache `.slack-cache`
+## 9. The image cache `.slack-cache`
 
 The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architecture.md#34-image-cache)).
 
@@ -170,7 +187,7 @@ The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architectu
   - Each poll downloads at most 10 files.
   - A thumbnail needs the `files:read` scope.
 
-## 9. Return to the `main` layout
+## 10. Return to the `main` layout
 
 - Show Herdr's own layout:
 
@@ -187,11 +204,13 @@ The images are in `~/.config/herdr-app/.slack-cache/` ([architecture](architectu
 - In the `main` layout, the meter, the Slack button and the panel do not run. `"slack"` stays in `workspace.panels`, which does no harm.
 - If `main-slack.json` is broken, run `./install.sh` to build it again.
 
-## 10. Known limits
+## 11. Known limits
 
 - Each search gets the newest 50 matches each minute. If more than 50 matches arrive in one minute, the panel misses some.
 - A message that you read in Slack clears in the panel within 1 or 2 polls (about 1 to 2 min). With more than 40 read marks that have unread items, it can take longer.
 - A reply in a thread that you do not follow in Slack stays unread until you open it in the panel. Slack gives no `last_read` for that thread.
+- Opening or replying to a thread in the panel does not mark it read in Slack. Slack has no documented method that marks a thread read. Whether a reply posted as you clears the thread in Slack was not verified.
+- The panel does not know which messages you scrolled to. It marks a view up to the newest message that the view showed, also if that message was below the visible part.
 - Custom workspace emoji show as `:name:` text. The list dims them. The conversation view does not.
 - A nested bullet under a numbered line shows as its own list.
 - A channel mention written as `<#C123>` shows its id if the token cannot see that channel.

@@ -1,6 +1,6 @@
 # ADR 0006: Read-only unread state from `last_read`
 
-- **Status:** Accepted, 2026-11-15. [ADR 0011](0011-replies-from-the-conversation-view.md) adds `chat:write` for replies, so the token is no longer read-only. [ADR 0013](0013-thread-read-marks.md) replaces the thread rule and the refresh rule: a thread reply uses its thread's `last_read`, and the poller fetches read marks least recently checked first.
+- **Status:** Accepted, 2026-11-15. [ADR 0011](0011-replies-from-the-conversation-view.md) adds `chat:write` for replies, so the token is no longer read-only. [ADR 0013](0013-thread-read-marks.md) replaces the thread rule and the refresh rule: a thread reply uses its thread's `last_read`, and the poller fetches read marks least recently checked first. [ADR 0015](0015-read-state-both-ways.md) replaces the rule that the panel never calls `conversations.mark`: read state now flows both ways.
 
 ## Context
 

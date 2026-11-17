@@ -1,6 +1,6 @@
 # ADR 0013: Read marks for threads, fetched least recently checked first
 
-- **Status:** Accepted, 2026-11-16. Replaces the thread rule and the refresh rule of [ADR 0006](0006-read-only-unread.md). The other rules of ADR 0006 stay.
+- **Status:** Accepted, 2026-11-16. Replaces the thread rule and the refresh rule of [ADR 0006](0006-read-only-unread.md). The other rules of ADR 0006 stay. [ADR 0015](0015-read-state-both-ways.md) replaces the rule that the panel never calls `conversations.mark`.
 - **Decided by:** Ajay, the owner of the project.
 
 ## Context

@@ -1576,3 +1576,223 @@ test("post: one JSON request, token only in the header, never retried", async ()
   );
   assert.equal(replyError("odd_thing"), "Slack error: odd_thing");
 });
+
+test("mark read in Slack: the ts for each view kind, never past what the view showed", async () => {
+  const { viewMark, replyMark, viewOf, threadView, replyTarget } =
+    await import("../mods/slack/lib.js");
+  const m = (ts) => ({ ts });
+  const dm = { kind: "dm", ch: "D1", latest: { name: "Ann Lee", ts: "5.0" } };
+  const mention = {
+    kind: "channel",
+    ch: "C1",
+    name: "eng",
+    thread: null,
+    latest: { ts: "20.0", sender: "Bea Kim" },
+  };
+  // A DM or group DM: the newest message loaded, whatever the order.
+  assert.deepEqual(viewMark(viewOf(dm), [m("3.0"), m("9.5"), m("9.25")]), {
+    ch: "D1",
+    ts: "9.5",
+  });
+  assert.equal(viewMark(viewOf(dm), []), null);
+  // A mention outside a thread: the newest message shown, not the channel's newest.
+  const shown = [m("18.0"), m("20.0"), m("21.0"), m("22.0")];
+  assert.deepEqual(viewMark(viewOf(mention), shown), { ch: "C1", ts: "22.0" });
+  // More than 100 follow the mention: the 10 shown after it are not the next ones,
+  // so only the mention counts.
+  assert.deepEqual(viewMark(viewOf(mention), shown, { gap: true }), {
+    ch: "C1",
+    ts: "20.0",
+  });
+  // A thread: no documented thread mark, so none.
+  assert.equal(
+    viewMark(threadView(viewOf(dm), "4.0"), [m("4.0"), m("6.0")]),
+    null,
+  );
+  assert.equal(
+    viewMark(viewOf({ ...mention, thread: "1.0" }), [m("1.0"), m("2.0")]),
+    null,
+  );
+  // A reply: a DM or group DM up to the reply; a thread reply marks nothing, and a
+  // reply to a mention outside a thread is a thread reply.
+  const target = (row, v = viewOf(row)) => replyTarget(v, row);
+  assert.deepEqual(replyMark(target(dm), "30.0"), { ch: "D1", ts: "30.0" });
+  assert.equal(replyMark(target(mention), "31.0"), null);
+  assert.equal(
+    replyMark(target(dm, threadView(viewOf(dm), "4.0")), "32.0"),
+    null,
+  );
+  assert.equal(replyMark(target(dm), undefined), null);
+});
+
+test("mark read in Slack: never back, repeat marks combined, the switch", async () => {
+  const { markAhead, markOn, markState, queueMark } =
+    await import("../mods/slack/lib.js");
+  assert.ok(markAhead(null, "5.0"));
+  assert.ok(markAhead("0000000000.000000", "5.0"));
+  assert.ok(markAhead("5.0", "5.000001"));
+  assert.ok(!markAhead("5.0", "5.0"));
+  assert.ok(!markAhead("5.1", "5.09"));
+  // The switch: on unless set to false.
+  assert.ok(markOn(undefined) && markOn(null) && markOn(true));
+  assert.ok(!markOn(false));
+  // The open and then a reply: one queued mark, the newest ts.
+  const s = markState();
+  assert.equal(queueMark(s, { ch: "D1", ts: "9.0" }, undefined), true);
+  assert.equal(queueMark(s, { ch: "D1", ts: "12.0" }, undefined), false);
+  assert.equal(queueMark(s, { ch: "D1", ts: "10.0" }, undefined), false);
+  assert.equal(s.pending.get("D1"), "12.0");
+  assert.equal(queueMark(s, { ch: "D2", ts: "1.0" }, true), true);
+  assert.equal(s.pending.size, 2);
+  // Off, no mark or blocked: nothing queued.
+  const off = markState();
+  assert.equal(queueMark(off, { ch: "D1", ts: "9.0" }, false), false);
+  assert.equal(queueMark(off, null, true), false);
+  off.blocked = true;
+  assert.equal(queueMark(off, { ch: "D1", ts: "9.0" }, true), false);
+  assert.equal(off.pending.size, 0);
+});
+
+test("mark read in Slack: last_read first, one POST, missing_scope stops marks", async () => {
+  const { markState, queueMark, flushMark } =
+    await import("../mods/slack/lib.js");
+  // A stub of the mod's call(method, params, post): it throws {kind, detail} as the mod does.
+  const stub = (lastRead, markError = null) => {
+    const calls = [];
+    const call = async (method, params, post = false) => {
+      calls.push({ method, params, post });
+      if (method === "conversations.info")
+        return {
+          ok: true,
+          channel: { id: params.channel, last_read: lastRead },
+        };
+      if (markError) throw markError;
+      return { ok: true };
+    };
+    return { calls, call };
+  };
+  const queued = (ts = "12.0") => {
+    const s = markState();
+    queueMark(s, { ch: "D1", ts }, true);
+    return s;
+  };
+
+  let s = queued(),
+    st = stub("9.0");
+  assert.deepEqual(await flushMark(s, "D1", { call: st.call, on: true }), {
+    ch: "D1",
+    ts: "12.0",
+    marked: true,
+  });
+  assert.deepEqual(st.calls, [
+    { method: "conversations.info", params: { channel: "D1" }, post: false },
+    {
+      method: "conversations.mark",
+      params: { channel: "D1", ts: "12.0" },
+      post: true,
+    },
+  ]);
+  assert.equal(s.pending.size, 0);
+
+  // Slack is already at or past the ts (read in Slack meanwhile): no mark, never back.
+  // Slack's own mark comes back, so the local marks can follow it.
+  for (const at of ["12.0", "15.0"]) {
+    ((s = queued()), (st = stub(at)));
+    assert.deepEqual(await flushMark(s, "D1", { call: st.call, on: true }), {
+      ch: "D1",
+      ts: at,
+      marked: false,
+    });
+    assert.deepEqual(
+      st.calls.map((c) => c.method),
+      ["conversations.info"],
+    );
+  }
+
+  // Switched off before the wait ended: no call at all.
+  ((s = queued()), (st = stub("9.0")));
+  assert.deepEqual(await flushMark(s, "D1", { call: st.call, on: false }), {
+    skip: "off",
+  });
+  assert.equal(st.calls.length, 0);
+
+  // Other errors skip this mark only; later marks still go.
+  for (const detail of [
+    "not_in_channel",
+    "channel_not_found",
+    "invalid_timestamp",
+  ]) {
+    ((s = queued()), (st = stub("9.0", { kind: "api", detail })));
+    assert.deepEqual(await flushMark(s, "D1", { call: st.call, on: true }), {
+      error: detail,
+    });
+    assert.equal(s.blocked, false, detail);
+    assert.equal(queueMark(s, { ch: "D1", ts: "13.0" }, true), true, detail);
+  }
+  ((s = queued()), (st = stub("9.0", { kind: "ratelimited" })));
+  assert.deepEqual(await flushMark(s, "D1", { call: st.call, on: true }), {
+    error: "ratelimited",
+  });
+  // A failed last_read lookup: no mark.
+  s = queued();
+  const calls = [];
+  const failing = async (method) => {
+    calls.push(method);
+    throw { kind: "network", detail: "offline" };
+  };
+  assert.deepEqual(await flushMark(s, "D1", { call: failing, on: true }), {
+    error: "network",
+  });
+  assert.deepEqual(calls, ["conversations.info"]);
+
+  // missing_scope on the mark (the app has no write scopes yet): blocked, and no
+  // further tries, queued or not, until the token changes.
+  ((s = queued()),
+    (st = stub("9.0", { kind: "auth", detail: "missing_scope" })));
+  queueMark(s, { ch: "D2", ts: "3.0" }, true);
+  assert.deepEqual(await flushMark(s, "D1", { call: st.call, on: true }), {
+    error: "missing_scope",
+  });
+  assert.equal(s.blocked, true);
+  assert.equal(queueMark(s, { ch: "D3", ts: "4.0" }, true), false);
+  const before = st.calls.length;
+  assert.deepEqual(await flushMark(s, "D2", { call: st.call, on: true }), {
+    skip: "off",
+  });
+  assert.equal(st.calls.length, before);
+});
+
+test("mark read in Slack: the button copy takes the panel's marks forward only", async () => {
+  const { takeMarks, markRead } = await import("../mods/slack/lib.js");
+  const lastRead = { D1: "5.0", C1: "30.0" };
+  const marked = [
+    { key: "D1", ts: "9.0", at: 100 },
+    { key: "C1", ts: "20.0", at: 200 }, // behind the local mark: kept as it is
+  ];
+  assert.deepEqual(takeMarks(lastRead, marked, 0), { changed: true, at: 200 });
+  assert.deepEqual(lastRead, { D1: "9.0", C1: "30.0" });
+  // Taken once: the same list again changes nothing, also after Slack moved D1 back.
+  lastRead.D1 = "4.0";
+  assert.deepEqual(takeMarks(lastRead, marked, 200), {
+    changed: false,
+    at: 200,
+  });
+  assert.equal(lastRead.D1, "4.0");
+  // A new mark, also for a key with no local mark yet.
+  marked.push({ key: "D2", ts: "7.0", at: 300 });
+  assert.deepEqual(takeMarks(lastRead, marked, 200), {
+    changed: true,
+    at: 300,
+  });
+  assert.equal(lastRead.D2, "7.0");
+  assert.deepEqual(takeMarks(lastRead, null, 300), { changed: false, at: 300 });
+  // The items it covers are read at once.
+  const items = [
+    { id: "D2:6.0", ch: "D2", ts: "6.0", thread: null },
+    { id: "D2:8.0", ch: "D2", ts: "8.0", thread: null },
+  ];
+  assert.deepEqual(
+    markRead(items, lastRead).map((i) => i.read),
+    [true, false],
+  );
+});

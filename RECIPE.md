@@ -1,6 +1,6 @@
 # Slack for Herdr
 
-Herdr's own window with two additions. A usage meter sits above Settings in the sidebar and shows Claude 5-hour, Claude 7-day and Codex use. A Slack button sits right of Files and Changes in the tab bar and opens a Slack panel in the right-hand panel stack. The panel lists your DMs, group DMs and mentions, one row for each conversation or thread. It reads a conversation in place, replies when you click Send, and sends a message to a Claude Code agent with one click. Nothing else in Slack changes.
+Herdr's own window with two additions. A usage meter sits above Settings in the sidebar and shows Claude 5-hour, Claude 7-day and Codex use. A Slack button sits right of Files and Changes in the tab bar and opens a Slack panel in the right-hand panel stack. The panel lists your DMs, group DMs and mentions, one row for each conversation or thread. It reads a conversation in place, replies when you click Send, and sends a message to a Claude Code agent with one click. When you open or answer a conversation there, it marks it read in Slack too (a switch under the gear). Nothing else in Slack changes.
 
 ![Slack for Herdr](preview.png)
 
@@ -26,6 +26,9 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
 - **Slack panel** (`slack` in the stack `panel-body`, 368 px when the panel column shows), a card with radius 10, `background` and a `border` line:
   - Header, 42 px: `Slack`, an `N unread` chip, a refresh button (a 26 px box with a 14 px `refresh.svg`; it spins while a refresh runs), and a gear that opens the filters. For 4 s after a refresh, `Updated just now` or the wait shows in 11 px `dim` text left of the button.
   - Filters, under the header when open: `Include channels` and `Exclude channels, people or bots` (28 px inputs), a hint, and `N dismissed` with **Clear dismissed**.
+  - Under the filter hint, after a `border` line: a 24 px `Mark read in Slack` switch, with a 7 px dot and the label.
+    - When on, the dot is `accent`, and the switch is `selected` with an `accent` outline. A `dim` hint follows.
+    - Without the write scopes, a `blocked` line says "Needs write permission to mark read in Slack".
   - Under the filters, after a `border` line, `Send to agent`: a 24 px chip for each installed agent with its icon (the chosen one `selected` with an `accent` outline), a `Model` input, suggestion chips, and a hint. For an agent without a model flag, the input is a `dim` box that says "model not supported for this agent".
   - Tabs row, 36 px: `All`, `Mentions` and `DMs` with row counts, and an `Unread` toggle at the right (a 7 px dot, `accent` when on).
   - Rows: a 32 px photo (radius 6), or the sender's initial on `raised`. A group DM shows up to three 21 px photos that overlap diagonally, with `+N` for more.
@@ -62,7 +65,7 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - The meter reads the usage files.
   - The button copy polls Slack.
   - The panel moves the relative times, and refreshes an open conversation view.
-  - Also, the button copy reads `shared("slack.refresh")` once a second. It draws nothing and polls only on a new request.
+  - Also, the button copy reads `shared("slack.refresh")` and `shared("slack.marked")` once a second. It draws nothing. It polls only on a new request, and publishes only when a new mark moves a read mark.
 - **Usage meter:**
   - A click reads the files again and starts a probe if one is allowed. If a probe ran less than 30 min ago, a toast tells when the next one is allowed.
   - A probe is a hidden one-word Claude Haiku session. It starts by itself when the Claude data is more than 60 min old and the Mac had input in the last 10 min.
@@ -103,6 +106,15 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
   - On failure, the text stays and Slack's error shows on one line. Nothing retries the post.
   - Esc with an empty composer goes back. With text, the first Esc only takes the focus off the composer.
   - Each conversation keeps its own draft in memory while Herdr runs. Drafts never go into `shared`.
+- **Mark read in Slack** (ADR 0015), on by default, a switch under the gear:
+  - The first load of a DM or group DM marks it read in Slack up to the newest message loaded.
+  - The first load of a channel mention marks the channel up to the newest message that the view showed. If more than 100 messages follow the mention, only up to the mention.
+  - A reply in a DM or group DM marks it up to the reply.
+  - Known limit: opening or replying to a thread does not mark it read in Slack. Slack has no documented method for it. Whether a reply posted as you clears the thread in Slack was not verified.
+  - Each mark waits 10 s, so an open and a quick reply make one call. Then the panel reads Slack's `last_read` and calls `conversations.mark` only past it. It never moves a mark back.
+  - A failed mark changes nothing and blocks nothing.
+  - Without the write scopes, Slack answers `missing_scope`. The settings show one line. No more marks go out until the panel reads the token again (switch off and on).
+  - After a mark, the row and the badge clear within 1 s, through `shared("slack.marked")`.
 - **Unread state:** a message is unread until Slack's read mark passes it, or until you open, send or dismiss it here. A DM or top-level message uses its conversation's `last_read` (`conversations.info`). A thread reply uses its thread's `last_read` (the parent in `conversations.replies`, `limit=1`). Each poll fetches at most 20 marks, least recently checked first, marks with unread items first. A mark that moves back (Mark unread in Slack) makes its items unread here again.
 - **Errors:** no token, a refused token, a rate limit and no network each show a short `dim` message in the panel. The last items stay. A rate limit waits 60 s, then twice as long each time, up to 10 min.
 
@@ -137,18 +149,19 @@ Left to right, then top to bottom. All colours are theme names, so the layout fo
 - **Shipped mods used, not cloned:** `workspace-chrome`, `spaces`, `agents`, `tabs`, `pane`, `files`, `changes` and `workspace-status`. The mods also draw four of `workspace-chrome`'s icons: `spinner.svg`, `settings.svg`, `chevron-left.svg` and `file-text.svg`.
 - **`herdr` functions:**
   - `usage-meter`: `exec`, `hc`, `home`, `readTextFile`, `theme`, `layout`, `notify`, `localStorage` (`lastProbe`).
-  - `slack`: `exec`, `fetch` (`GET` reads, one `POST` for replies), `theme`, `layout`, `run`, `props`, `shared`, `setShared`, `spaces`, `home`, `appHome`, `notify`, `knownAgents` (the agent chips, with Herdr's own icons), `localStorage`, `cx.bind_keys` (Enter and Shift+Enter in the composer only). The button copy keeps `people`, `channels`, `members` and `lastRead`. The panel copy keeps `people`, `channels` and `unreadOnly`.
+  - `slack`: `exec`, `fetch` (`GET` reads, a JSON `POST` for replies, a form `POST` for read marks), `console.log` (a failed mark's error code only), `theme`, `layout`, `run`, `props`, `shared`, `setShared`, `spaces`, `home`, `appHome`, `notify`, `knownAgents` (the agent chips, with Herdr's own icons), `localStorage`, `cx.bind_keys` (Enter and Shift+Enter in the composer only). The button copy keeps `people`, `channels`, `members` and `lastRead`. The panel copy keeps `people`, `channels` and `unreadOnly`.
 - **Commands:**
   - `layout.select {stack: "panel-body", child: "slack"}`, `layout.show {id: "panel"}` and `layout.hide {id: "panel"}`, through `run`.
   - `tab.new` and `space.new`, through `herdr-app do`, so that a failure comes back as an error.
 - **Shared keys:**
   - `slack.items`: the newest 150 items, only when the list changes.
   - `slack.status`, `slack.me` (the user id, never the token), `slack.seen`, `slack.dismissed`, `slack.filters` and `slack.agent` (`{agent, model, space}`, with `space` as `{id, name, folder}`).
+  - `slack.markRead` (`false` when the switch is off) and `slack.marked` (the newest 20 read marks set in Slack, `[{key, ts, at}]`, no text).
   - `workspace.panels`: the button copy adds `"slack"`.
 - **Slack Web API**, user token:
   - Read methods: `auth.test`, `search.messages` (`<@USER_ID>` and `to:me`, 50 each, by time), `users.info`, `conversations.info`, `conversations.members`, `conversations.history` and `conversations.replies`.
-  - One write method: `chat.postMessage`, only from Send in the composer.
-  - Scopes: `search:read`, `users:read`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `files:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history` and `chat:write` (`slack-app-manifest.yaml`).
+  - Two write methods: `chat.postMessage`, only from Send in the composer, and `conversations.mark`, only after an open or a reply, under the switch.
+  - Scopes: `search:read`, `users:read`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `files:read`, `channels:history`, `groups:history`, `im:history`, `mpim:history`, `chat:write`, `channels:write`, `groups:write`, `im:write` and `mpim:write` (`slack-app-manifest.yaml`).
 - **Programs:**
   - `security find-generic-password -s herdr-slack -w`, for the token.
   - `curl` for images, with the token on stdin for Slack files only.
@@ -177,6 +190,7 @@ Tell the person these facts before you add this layout:
   - For the Claude rows, a status-line snippet that writes the usage file.
   - Steps: [`docs/deployment.md`](docs/deployment.md).
 - **Posts as the person:** the token has `chat:write`, so it can post as the person. The mod posts only when the person clicks Send or presses Enter in the composer. Nothing posts on its own, and nothing retries a post.
+- **Marks read as the person:** the token has `channels:write`, `groups:write`, `im:write` and `mpim:write`. These scopes also allow changes to channels, such as a rename or an archive. The mod uses them only for `conversations.mark`, after the person opens or answers a conversation, and only while "Mark read in Slack" is on.
 - **Agent risk:** Send to agent gives Slack content to an agent with tool access. A message can hold instructions. An agent other than Claude gets the conversation text in its first message. Keep the agent's approval prompts on ([`SECURITY.md`](SECURITY.md)).
 - **Herdr limits that shaped the build:**
   - `image()` loads only files under the app home, so the image cache is in `~/.config/herdr-app/.slack-cache/`. It is hidden because a file saved under `mods/` reloads the mod.
@@ -186,7 +200,7 @@ Tell the person these facts before you add this layout:
   - Herdr's `tabs` mod restores a space's panel only if its id is in `shared("workspace.panels")`, so the button copy adds `"slack"`.
 - **Snapshot:** `layouts/main-slack.json` is a snapshot of Herdr 0.1.15's `main.json` with the patch. After a Herdr update that changes `main.json`, make the file again with `layout/main-slack.jq`, or run `./install.sh`. A copy from herdr.dev does not change by itself.
 - **Defaults in `mods/slack/lib.js`:** the agent, the model and the space are settings under the gear. Their defaults (`AGENT`: Claude, `claude-opus-5-5`; `SPACE`: `space` at `~/code`) and the model suggestions (`MODELS`) are in `lib.js`.
-- **Limits:** no pagination (50 newest matches for each search, 150 items kept). Without the `*:history` scopes, the view shows "Needs history permission". Without `chat:write`, a reply shows "Needs the chat:write permission". Without `files:read`, there are no thumbnails. Custom workspace emoji show as text.
+- **Limits:** no pagination (50 newest matches for each search, 150 items kept). Without the `*:history` scopes, the view shows "Needs history permission". Without `chat:write`, a reply shows "Needs the chat:write permission". Without the `*:write` scopes, the settings show "Needs write permission to mark read in Slack". Opening or replying to a thread does not mark it read in Slack. Without `files:read`, there are no thumbnails. Custom workspace emoji show as text.
 - **`herdr-app check`** runs the meter's `init`. If the Claude data is stale and the Mac is in use, the check can start a probe. The meter removes a probe older than 5 min on its next probe.
 
 ## Done when
