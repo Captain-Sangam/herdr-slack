@@ -90,7 +90,7 @@ The usage meter runs these for the probe:
 
 ### 2.1 Methods and scopes
 
-All calls send the user token in an `Authorization: Bearer` header. The reads are `GET https://slack.com/api/<method>`. The only write is `POST https://slack.com/api/chat.postMessage` with a JSON body.
+All calls send the user token in an `Authorization: Bearer` header. The reads are `GET https://slack.com/api/<method>`. There are two writes: `POST https://slack.com/api/chat.postMessage` with a JSON body, and `POST https://slack.com/api/conversations.mark` with a form body (`application/x-www-form-urlencoded`).
 
 | Method                  | Caller        | Parameters                                                       | Scopes                                                             |
 | ----------------------- | ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
@@ -104,13 +104,18 @@ All calls send the user token in an `Authorization: Bearer` header. The reads ar
 | `conversations.replies` | Button, panel | `channel`, `ts`, `limit=200` (`limit=1` in the button), `cursor` | The same `*:history` scopes                                        |
 | File thumbnail URLs     | Button, panel | `GET` on `thumb_360` (or the nearest size)                       | `files:read`                                                       |
 | `chat.postMessage`      | Panel         | JSON: `channel`, `text`, `thread_ts` for a thread reply          | `chat:write`                                                       |
+| `conversations.mark`    | Panel         | Form: `channel`, `ts`                                            | `channels:write`, `groups:write`, `im:write`, `mpim:write`         |
 
 - The two search queries are `<@USER_ID>` (mentions) and `to:me` (DMs and group DMs). `USER_ID` comes from `auth.test`.
-- `slack-app-manifest.yaml` asks for exactly the scopes in this table. All of them are read scopes except `chat:write`.
+- `slack-app-manifest.yaml` asks for exactly the scopes in this table. All of them are read scopes except `chat:write` and the four `*:write` scopes.
 - `chat.postMessage` with a user token posts as that user. The body is `application/json; charset=utf-8`. The text goes as typed: Slack escapes `<`, `>` and `&` itself.
 - Its answer has `ts` and `message`. The view shows that message at once.
 - The app has no bot user, and token rotation is off, so the user token does not expire.
 - `conversations.info` and `conversations.replies` are Tier 3 methods: 50+ calls each minute. The poller makes at most 30 `conversations.info` calls and 20 `conversations.replies` calls in each poll.
+- `conversations.mark` is a Tier 3 method too. Each mark from the panel makes one `conversations.info` call and at most one `conversations.mark` call.
+- `conversations.mark` sets the user's read position in the conversation to `ts`, forward or back. So the panel reads `last_read` with `conversations.info` just before each mark, and skips a mark that would move it back ([ADR 0015](adr/0015-read-state-both-ways.md)).
+- A reply with `chat.postMessage` does not clear the conversation's unread state in Slack.
+- Slack has no documented method that marks a thread read. `subscriptions.thread.mark` and the like are private, and the panel does not use them.
 - `conversations.replies` with `limit=1` returns the parent and the first reply.
 - `last_read` moves forward when you read in Slack, and back after "Mark unread".
 
@@ -160,6 +165,13 @@ A failed reply shows one line over the composer:
 | `msg_too_long`           | The message is too long for Slack. Make it shorter.                           |
 | `ratelimited`, HTTP 429  | Slack rate limit. Wait a minute, then send again.                             |
 | `fetch` throws           | Cannot reach Slack. Look in Slack before you send again.                      |
+
+A failed `conversations.mark` never shows in the view:
+
+| Error                                                                             | What the panel does                                                                                     |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `missing_scope`                                                                   | Shows "Needs write permission to mark read in Slack" in the settings. No more marks until a token read. |
+| `not_in_channel`, `channel_not_found`, `invalid_timestamp`, `ratelimited`, others | Skips that mark.                                                                                        |
 
 ## 3. Claude Code status line
 

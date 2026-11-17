@@ -861,6 +861,99 @@ export const replyError = (code) =>
     ? `Slack refused the token (${code}).`
     : `Slack error: ${code}`);
 
+// ── Read marks in Slack (ADR 0015) ────────────────────────────────────────
+// Under the "Mark read in Slack" switch (shared "slack.markRead", on unless false), the
+// panel moves Slack's read mark with conversations.mark when you open or answer a
+// conversation. It never moves a mark back and never marks past what the view showed.
+export const markOn = (setting) => setting !== false;
+export const MARK_WAIT = 10000; // repeat marks for one conversation in this time make one call
+
+const newest = (msgs) =>
+  msgs.reduce((a, m) => (a == null || tsCmp(m.ts, a) > 0 ? m.ts : a), null);
+
+// The mark a view's first load gives, {ch, ts}, or null:
+// - a DM or group DM: the newest message the view loaded
+// - a channel mention outside a thread: the newest message the view showed. `gap`: the view
+//   skipped messages after the mention (more than 100 follow it), so only the mention counts.
+// - a thread: none. Slack has no documented method that marks a thread read.
+export function viewMark(v, raw, { gap = false } = {}) {
+  if (v.mode === "thread") return null;
+  const shown =
+    v.mode === "around" && gap
+      ? raw.filter((m) => tsCmp(m.ts, v.anchor) <= 0)
+      : raw;
+  const ts = newest(shown);
+  return ts ? { ch: v.ch, ts } : null;
+}
+
+// A reply that posted marks its DM or group DM up to the reply. A reply in a thread marks
+// nothing. A channel reply from the panel is always in a thread.
+export const replyMark = (target, ts) =>
+  target.thread || !ts ? null : { ch: target.channel, ts };
+
+// Never back: a ts at or before Slack's current last_read needs no mark.
+export const markAhead = (lastRead, ts) =>
+  lastRead == null || tsCmp(ts, lastRead) > 0;
+
+// The panel's state: queued marks by conversation, and `blocked` after missing_scope.
+export const markState = () => ({ pending: new Map(), blocked: false });
+
+// Queues a mark; the newest ts wins. True when the conversation had none queued, so the
+// caller starts the wait. Off, blocked or no mark: nothing.
+export function queueMark(state, mark, on) {
+  if (!mark || !markOn(on) || state.blocked) return false;
+  const was = state.pending.get(mark.ch);
+  if (was == null || tsCmp(mark.ts, was) > 0)
+    state.pending.set(mark.ch, mark.ts);
+  return was == null;
+}
+
+// After the wait: Slack's current last_read (conversations.info), then conversations.mark
+// only when the ts is past it. `call(method, params, post)` throws {kind, detail} as the
+// mod's call does. Never throws. Returns {ch, ts, marked}: Slack's read mark now, so the
+// local marks can follow it; or {skip: "off"}, or {error: code}.
+// missing_scope on the mark blocks every mark until the token changes.
+export async function flushMark(state, ch, { call, on }) {
+  const ts = state.pending.get(ch);
+  state.pending.delete(ch);
+  if (ts == null || !markOn(on) || state.blocked) return { skip: "off" };
+  const code = (e) =>
+    e?.kind === "api" || e?.kind === "auth" ? e.detail : (e?.kind ?? "error");
+  let info;
+  try {
+    info = await call("conversations.info", { channel: ch });
+  } catch (e) {
+    return { error: code(e) };
+  }
+  const now = info?.channel?.last_read;
+  if (!markAhead(now, ts)) return { ch, ts: now, marked: false };
+  try {
+    await call("conversations.mark", { channel: ch, ts }, true);
+  } catch (e) {
+    if (code(e) === "missing_scope") state.blocked = true;
+    return { error: code(e) };
+  }
+  return { ch, ts, marked: true };
+}
+
+// The panel's marks in Slack, newest last, as shared "slack.marked" ([{key, ts, at}]).
+// The button copy takes the ones after `since` into its read marks, forward only, so the
+// list and the badge clear without a poll. Returns whether a mark moved, and the new since.
+export const MARKED_MAX = 20;
+export function takeMarks(lastRead, marked, since) {
+  let changed = false,
+    at = since;
+  for (const m of marked ?? []) {
+    if (!(m.at > since)) continue;
+    at = Math.max(at, m.at);
+    if (markAhead(lastRead[m.key], m.ts)) {
+      lastRead[m.key] = m.ts;
+      changed = true;
+    }
+  }
+  return { changed, at };
+}
+
 // Decision 6: 60 s, doubling, at most 10 min; a success resets it to 0.
 export const backoff = (previous) =>
   previous ? Math.min(previous * 2, 600000) : 60000;

@@ -20,7 +20,7 @@ This page tells how to set up herdr-slack on a Mac. It covers the Slack app, the
 5. Click Install to Workspace. If Slack asks for an admin approval, ask an admin to approve the app.
 6. Open OAuth & Permissions. Copy the User OAuth Token. It starts with `xoxp`.
 
-The manifest asks for read user scopes, `chat:write` for replies, and no bot user ([interfaces](interfaces.md#21-methods-and-scopes)). The token can post as you. The mods post only when you send a reply.
+The manifest asks for read user scopes, `chat:write` for replies, the `*:write` scopes to mark read in Slack, and no bot user ([interfaces](interfaces.md#21-methods-and-scopes)). The token can post as you and move your read position. The mods post only when you send a reply. They move your read position only with `conversations.mark`, under the "Mark read in Slack" switch.
 
 ## 3. Store the token in the Keychain
 
@@ -118,6 +118,12 @@ Files that herdr-slack writes:
   1. Do the steps above, and add the user scope `chat:write`.
   2. Make sure that Slack shows "Send messages on your behalf" when you reinstall.
   3. Open a conversation in the panel and send a reply. Until the reinstall, each reply fails with "Needs the chat:write permission".
+- **To turn on Mark read in Slack** (an app made before the `*:write` scopes):
+  1. Do the steps above, and add the user scopes `channels:write`, `groups:write`, `im:write` and `mpim:write`.
+  2. Read the permission list when you reinstall. It now has write access to your channels, private channels, DMs and group DMs ([SECURITY.md](../SECURITY.md#scopes-and-posts)).
+  3. In the panel, click the gear. Turn "Mark read in Slack" off, then on. The panel then reads the token from the Keychain again. A restart of Herdr does the same.
+  4. Open a DM that is unread in Slack. Within about 10 s, Slack shows it read.
+  - Until the reinstall, the settings show "Needs write permission to mark read in Slack". The rest of the panel works.
 
 ## 7. Uninstall
 

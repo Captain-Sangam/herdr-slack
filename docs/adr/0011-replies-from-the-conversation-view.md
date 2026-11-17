@@ -1,6 +1,6 @@
 # ADR 0011: Replies from the conversation view
 
-- **Status:** Accepted, 2026-11-16. Replaces the rule that the panel never posts to Slack (ADR 0006, ADR 0010).
+- **Status:** Accepted, 2026-11-16. Replaces the rule that the panel never posts to Slack (ADR 0006, ADR 0010). [ADR 0015](0015-read-state-both-ways.md) replaces the rule that read marks stay out: the panel now calls `conversations.mark`.
 - **Decided by:** Ajay, the owner of the project.
 
 ## Context

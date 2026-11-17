@@ -2,7 +2,7 @@
 
 herdr-slack adds two mods and one generated layout to Herdr.app on one Mac. The mods run inside Herdr.app as JavaScript. There is no server, daemon or database.
 
-- **Status:** as built on `main`, 2026-11-15.
+- **Status:** as built on `main`, 2026-11-16.
 - **Decisions:** each design choice has an ADR in [`adr/`](README.md#decisions-adr).
 - **Related:** [interfaces](interfaces.md), [deployment](deployment.md), [operations](operations.md).
 
@@ -24,15 +24,15 @@ flowchart LR
   U -->|"hc run probe"| HC[herdr-core]
 ```
 
-| Component                | Source                            | Runs as                                                  | Job                                                                                                     |
-| ------------------------ | --------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `usage-meter` mod        | `mods/usage-meter/`               | Block `usage` above Settings in the sidebar              | Shows Claude 5h, Claude 7d and Codex use. Starts a Haiku probe when the Claude data is stale.           |
-| `slack` mod, button copy | `mods/slack/`, `role: "button"`   | Block `slack-button` right of Files and Changes          | Polls Slack each minute, publishes the items, draws the button and the unread badge.                    |
-| `slack` mod, panel copy  | `mods/slack/`, `role: "panel"`    | Block `slack` in the right-hand panel stack `panel-body` | Draws the list, the filters, the conversation view and the composer. Posts replies. Runs Send to agent. |
-| Layout patch             | `layout/main-slack.jq`            | `jq`, from `install.sh`                                  | Builds `main-slack.json` from Herdr's own `main.json`.                                                  |
-| Installer                | `install.sh`                      | Shell, by hand                                           | Copies the mods, builds the layout, checks the mods and switches to `main-slack`.                       |
-| Slack app manifest       | `slack-app-manifest.yaml`         | Pasted into api.slack.com                                | Makes a Slack app with read user scopes, `chat:write` and no bot user.                                  |
-| Emoji map                | `mods/slack/emoji.js` (generated) | Built by `scripts/gen-emoji.mjs`                         | Maps Slack `:short_name:` codes to Unicode.                                                             |
+| Component                | Source                            | Runs as                                                  | Job                                                                                                                          |
+| ------------------------ | --------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `usage-meter` mod        | `mods/usage-meter/`               | Block `usage` above Settings in the sidebar              | Shows Claude 5h, Claude 7d and Codex use. Starts a Haiku probe when the Claude data is stale.                                |
+| `slack` mod, button copy | `mods/slack/`, `role: "button"`   | Block `slack-button` right of Files and Changes          | Polls Slack each minute, publishes the items, draws the button and the unread badge.                                         |
+| `slack` mod, panel copy  | `mods/slack/`, `role: "panel"`    | Block `slack` in the right-hand panel stack `panel-body` | Draws the list, the filters, the conversation view and the composer. Posts replies. Marks read in Slack. Runs Send to agent. |
+| Layout patch             | `layout/main-slack.jq`            | `jq`, from `install.sh`                                  | Builds `main-slack.json` from Herdr's own `main.json`.                                                                       |
+| Installer                | `install.sh`                      | Shell, by hand                                           | Copies the mods, builds the layout, checks the mods and switches to `main-slack`.                                            |
+| Slack app manifest       | `slack-app-manifest.yaml`         | Pasted into api.slack.com                                | Makes a Slack app with read user scopes, `chat:write`, the `*:write` scopes and no bot user.                                 |
+| Emoji map                | `mods/slack/emoji.js` (generated) | Built by `scripts/gen-emoji.mjs`                         | Maps Slack `:short_name:` codes to Unicode.                                                                                  |
 
 - Both copies of the `slack` mod run the same `main.js`. The `role` prop picks the job.
 - Pure logic is in `lib.js` in each mod. It imports nothing from Herdr, so `node --test` runs it ([testing](testing.md)).
@@ -123,6 +123,8 @@ Every copy of every mod can read these keys. Herdr keeps them in `~/.config/herd
 | `slack.dismissed`  | Panel copy            | Ids of dismissed items. Pruned to the listed items.                                                                                         |
 | `slack.filters`    | Panel copy            | `{include, exclude}` pattern lists.                                                                                                         |
 | `slack.agent`      | Panel copy            | `{agent, model, space}` for Send to agent. `agent` is a `knownAgents()` key. `space` is `{id, name, folder}`.                               |
+| `slack.markRead`   | Panel copy            | `false` when the "Mark read in Slack" switch is off. Absent or `true` means on.                                                             |
+| `slack.marked`     | Panel copy            | The newest 20 read marks that the panel set or found in Slack: `[{key, ts, at}]`. The button copy takes them into `lastRead`.               |
 | `workspace.panels` | Herdr, plus `"slack"` | The panel ids that Herdr's `tabs` mod restores for each space.                                                                              |
 
 ### 3.3 Storage for each copy
@@ -158,7 +160,7 @@ Herdr's `image()` reads only from the app home, and a file saved under `mods/` r
 
 ### 3.5 Unread state
 
-The panel never marks messages read and never adds reactions ([ADR 0006](adr/0006-read-only-unread.md)). Its only write is a reply that you send ([3.7](#37-replies)).
+Read state flows both ways ([ADR 0015](adr/0015-read-state-both-ways.md)). Slack's read marks come to the panel at each poll. The panel moves Slack's read mark when you open or answer a conversation ([Marks in Slack](#marks-in-slack)). It never adds reactions.
 
 Each item has a read mark ([ADR 0013](adr/0013-thread-read-marks.md)):
 
@@ -172,8 +174,47 @@ Each item has a read mark ([ADR 0013](adr/0013-thread-read-marks.md)):
 - The newest value from Slack replaces the cached one, forward or back. If a mark moves back ("Mark unread" in Slack), the items that it makes unread leave `slack.seen`.
 - Each poll fetches at most 20 read marks, least recently checked first. A mark with an unread item comes first. A mark with no unread item counts as checked 10 min later, so it is checked less often but never starves.
 - A thread that you do not follow in Slack has no `last_read`. Its replies stay unread until you open, send or dismiss them in the panel.
-- The rows, the tab counts and the badge use the read flag in `slack.items`. They change when a poll publishes new flags.
+- The rows, the tab counts and the badge use the read flag in `slack.items`. They change when a poll publishes new flags, or when the button copy takes a mark from `slack.marked`.
 - The badge on the button counts unread messages that pass the filters and are not dismissed.
+
+#### Marks in Slack
+
+The panel calls `conversations.mark` under the "Mark read in Slack" switch (`shared("slack.markRead")`, on by default).
+
+| Event                                        | Mark up to                                                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| The first load of a DM or group DM view      | The newest message that the view loaded                                                                      |
+| The first load of a channel mention view     | The newest message that the view showed. With a gap after the mention (more than 100 follow it), the mention |
+| A reply posts in a DM or group DM            | The `ts` of the reply                                                                                        |
+| A thread opens, or a reply posts in a thread | No mark. Slack has no documented method that marks a thread read (known limit, below).                       |
+
+This diagram shows one mark.
+
+```mermaid
+sequenceDiagram
+  participant P as Panel copy
+  participant S as Slack Web API
+  participant SH as Herdr shared state
+  participant B as Button copy
+  P->>P: queueMark, wait 10 s
+  P->>S: conversations.info: current last_read
+  P->>S: conversations.mark, only past last_read
+  P->>SH: slack.marked {key, ts, at}
+  B->>SH: reads slack.marked each second
+  B->>B: lastRead forward only, publish slack.items
+```
+
+- `viewMark()`, `replyMark()`, `queueMark()`, `flushMark()` and `takeMarks()` in `lib.js` hold the logic. `flushMark()` gets the call as an argument, so the tests use a stub.
+- Never past what the view showed. The 60 s reload and the refresh button do not mark, because the panel can be hidden while its view reloads.
+- Never back. The current `last_read` comes from Slack just before the mark. If it is at or past the `ts`, the panel skips the mark and passes Slack's value on to `slack.marked`.
+- Repeat marks for one conversation within 10 s (`MARK_WAIT`) make one call, with the newest `ts`.
+- The local read marks move only after Slack accepts the mark. A failed mark changes nothing here.
+- The button copy reads `slack.marked` with the 1 s timer that reads `slack.refresh`. It takes only entries newer than the last one that it took, so a later "Mark unread" in Slack still wins.
+- Errors never block the view or the reply. The panel logs only the error code.
+  - `missing_scope`: the app has no `*:write` scopes. The settings show "Needs write permission to mark read in Slack". The panel stops all marks until it reads the token from the Keychain again. A switch off and on also reads it again.
+  - Any other error: the panel skips that mark.
+- The call is a form `POST`, with the token only in the `Authorization` header.
+- **Known limit:** opening or replying to a thread in the panel does not mark it read in Slack. Whether a reply posted as you clears the thread in Slack was not verified.
 
 ### 3.6 Grouping and the conversation view
 
@@ -225,6 +266,7 @@ sequenceDiagram
   S-->>P: ok and the message, or an error
   P->>P: clear, show the message, mark seen
   P->>S: load the view again
+  P->>S: DM or group DM: conversations.mark after 10 s
 ```
 
 - `replyTarget()`, `replyBody()`, `postReply()` and `replyError()` in `lib.js` hold the logic. `postReply()` gets `fetch` as an argument, so the tests use a stub.
@@ -233,6 +275,7 @@ sequenceDiagram
 - One post runs at a time. While it runs, Send and Enter do nothing.
 - A failed post keeps the text and shows one line over the composer. Nothing retries it.
 - A successful post clears the composer, adds the message to the view at once, marks the row seen and loads the view again. A reply under a mention outside a thread opens that thread.
+- A successful post in a DM or group DM marks it read in Slack up to the reply ([Marks in Slack](#marks-in-slack)).
 - Each target has its own composer and draft, in the panel copy's memory. A mention's view and its thread share one. Back releases a composer only when it is empty.
 - An open view loads again every 60 s, and on a click on the refresh button.
 - The messages of the view stay in the panel copy's memory. They never go into `shared`.
@@ -329,7 +372,7 @@ Display rules:
 
 ### 5.1 The token
 
-The Slack token is a user token with read scopes and `chat:write` ([ADR 0005](adr/0005-token-in-keychain.md), [ADR 0011](adr/0011-replies-from-the-conversation-view.md)). It can post as you. The mods post only on an explicit Send.
+The Slack token is a user token with read scopes, `chat:write` and the `*:write` scopes ([ADR 0005](adr/0005-token-in-keychain.md), [ADR 0011](adr/0011-replies-from-the-conversation-view.md), [ADR 0015](adr/0015-read-state-both-ways.md)). It can post as you and move your read position. The mods post only on an explicit Send. They move the read position only with `conversations.mark`, under the switch.
 
 - It lives in the macOS Keychain, as a generic password with service `herdr-slack`.
 - Each copy of the `slack` mod reads it with `security find-generic-password -s herdr-slack -w` and keeps it in instance memory only.
@@ -350,7 +393,7 @@ The Slack token is a user token with read scopes and `chat:write` ([ADR 0005](ad
 
 ### 5.3 What leaves the Mac
 
-- Calls to the Slack Web API, with the token. A reply that you send goes to Slack as a post.
+- Calls to the Slack Web API, with the token. A reply that you send goes to Slack as a post. A read mark goes to Slack as `conversations.mark`.
 - Downloads of avatars and public media from their own hosts, without the token.
 - Send to agent: the task text goes to the agent, which sends it to its model provider. Claude then reads Slack with its own connector. Another agent gets up to about 20,000 characters of the conversation in the task.
 - The usage probe: a one-word prompt to Claude Haiku.

@@ -3,7 +3,7 @@
 herdr-slack adds two mods and a generated layout to Herdr.app on macOS:
 
 - `mods/usage-meter/`: Claude 5-hour and 7-day use and Codex 7-day use, above Settings in the sidebar.
-- `mods/slack/`: a Slack button in the tab bar and a Slack panel. The panel lists DMs, group DMs and mentions, has a conversation view with a reply composer, and has Send to agent.
+- `mods/slack/`: a Slack button in the tab bar and a Slack panel. The panel lists DMs, group DMs and mentions, has a conversation view with a reply composer, marks read in Slack under a switch, and has Send to agent.
 - `install.sh` and `layout/main-slack.jq`: build `~/.config/herdr-app/layouts/main-slack.json` from Herdr's own `main.json`.
 
 The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure logic is in each mod's `lib.js`, and `test/` tests it. Everything else is in [`docs/`](docs/README.md).
@@ -52,7 +52,7 @@ The code is plain JavaScript (gpui-kit mods), shell, jq, YAML and JSON. The pure
   - a screenshot of a real window.
 - **`.agents/`:** the private council record. It is local only. It never goes to the public repo, and no public file links to it.
 - **Herdr:** drive it only with `hc` and `herdr-app`. Never use the legacy `herdr` CLI.
-- **Behaviour:** posts only from an explicit Send in the composer; no reactions, no read marks, no automatic posts.
+- **Behaviour:** posts only from an explicit Send in the composer. No reactions and no automatic posts. Read marks go to Slack only through `conversations.mark`, under the "Mark read in Slack" switch (`shared("slack.markRead")`). A mark never goes past what the view showed, and never back ([ADR 0015](docs/adr/0015-read-state-both-ways.md)).
 - **Send to agent:** the agent, the model and the space are settings in `shared("slack.agent")`, set under the panel's gear. The defaults (`AGENT`: Claude with `claude-opus-5-5`; `SPACE`: `space` at `~/code`) and the model suggestions (`MODELS`) are in `mods/slack/lib.js`. Send finds the space by its stored id, then its name, and makes it only when neither is open ([ADR 0014](docs/adr/0014-send-to-space-setting.md)). Never put the token in the agent task.
 
 ## Conventions

@@ -4,6 +4,7 @@
 // - role "panel" (in panel-body): renders the list and acts on it, and opens a
 //   conversation view with a reply composer. The view's messages and the drafts stay
 //   in this copy's memory, never in shared. Only an explicit Send posts (ADR 0011).
+//   Under the "Mark read in Slack" switch it moves Slack's read mark (ADR 0015).
 
 import { View, div, svg, image } from "gpui-kit";
 import {
@@ -82,6 +83,15 @@ import {
   sendSpace,
   refreshGate,
   refreshBusy,
+  markOn,
+  MARK_WAIT,
+  MARKED_MAX,
+  viewMark,
+  replyMark,
+  markState,
+  queueMark,
+  flushMark,
+  takeMarks,
 } from "./lib.js";
 
 const API = "https://slack.com/api/";
@@ -130,6 +140,11 @@ export default class Slack extends View {
     // Kept across reloads, so unread counts are right before fresh values arrive.
     this.lastRead = JSON.parse(localStorage.getItem("lastRead") ?? "{}"); // markKey -> last_read ts
     this.checked = {}; // markKey -> time of the last fetch, ms
+    // ADR 0015: the newest panel mark already taken, so a reload does not take one again.
+    this.markedAt = Math.max(
+      0,
+      ...(shared("slack.marked") ?? []).map((m) => m.at),
+    );
     this.channels = JSON.parse(localStorage.getItem("channels") ?? "{}"); // channel id -> name (null: not visible)
     this.members = JSON.parse(localStorage.getItem("members") ?? "{}"); // group DM id -> member ids
     this.people = JSON.parse(localStorage.getItem("people") ?? "{}"); // id -> {name, image}
@@ -148,7 +163,10 @@ export default class Slack extends View {
     cx.timer.every(60000, (cx) => this.poll(cx));
     // ponytail: a task started from render() never runs, so a 1 s check reads the request.
     // It only reads one shared value. Use nextCommand() if Herdr can address one copy.
-    cx.timer.every(1000, (cx) => this.checkRefresh(cx));
+    cx.timer.every(1000, (cx) => {
+      this.applyMarks();
+      this.checkRefresh(cx);
+    });
   }
 
   // A manual refresh. A request during a poll is answered when that poll ends; during
@@ -162,21 +180,51 @@ export default class Slack extends View {
     else this.poll(cx);
   }
 
+  // ADR 0015: the panel's marks in Slack move the read marks at once, forward only, so
+  // the list and the badge clear without a poll. A running poll publishes them itself.
+  applyMarks() {
+    const r = takeMarks(this.lastRead, shared("slack.marked"), this.markedAt);
+    this.markedAt = r.at;
+    if (!r.changed) return;
+    localStorage.setItem("lastRead", JSON.stringify(this.lastRead));
+    if (!this.polling) this.publish(markRead(items(), this.lastRead));
+  }
+
+  // Decision 4: publish only when the list changed; setShared re-renders every mod.
+  publish(list) {
+    const json = JSON.stringify(list);
+    if (json === this.published) return;
+    this.published = json;
+    setShared("slack.items", list);
+  }
+
   answer() {
     if (this.asked <= this.answered) return;
     this.answered = this.asked;
     setShared("slack.polled", { req: this.answered, at: Date.now() });
   }
 
-  async call(method, params) {
+  // A GET with the params in the query, or with `post` a form POST (conversations.mark).
+  async call(method, params, post = false) {
     const query = Object.entries(params)
       .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
       .join("&");
+    const auth = { Authorization: `Bearer ${this.token}` };
     let res;
     try {
-      res = await fetch(`${API}${method}?${query}`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
+      res = await fetch(
+        post ? `${API}${method}` : `${API}${method}?${query}`,
+        post
+          ? {
+              method: "POST",
+              headers: {
+                ...auth,
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: query,
+            }
+          : { headers: auth },
+      );
     } catch (e) {
       throw new SlackError("network", String(e?.message ?? e));
     }
@@ -230,6 +278,8 @@ export default class Slack extends View {
     ]).catch(() => null);
     if (r?.code !== 0 || !r.stdout.trim()) throw new SlackError("no-token");
     this.token = r.stdout.trim();
+    // A token read again can have the write scopes: marks may try again (ADR 0015).
+    if (this.marks) this.marks.blocked = false;
   }
 
   // Names and public avatar URLs, at most `max` new people per call.
@@ -483,12 +533,7 @@ export default class Slack extends View {
         let list = markRead(before, this.lastRead);
         const back = new Set(unmarked(before, list));
         list = await this.syncImages(list);
-        // Decision 4: publish only when the list changed; setShared re-renders every mod.
-        const json = JSON.stringify(list);
-        if (json !== this.published) {
-          this.published = json;
-          setShared("slack.items", list);
-        }
+        this.publish(list);
         // Read again here: the panel may have added ids during the lookups.
         const seen = shared("slack.seen") ?? [],
           pruned = pruneSeen(seen, list).filter((id) => !back.has(id));
@@ -679,6 +724,8 @@ export default class Slack extends View {
     this.replies = new Map();
     this.posting = null; // the target key of the one post in flight
     this.typing = false;
+    // ADR 0015: marks in Slack wait here, by conversation; `blocked` after missing_scope.
+    this.marks = markState();
     // Enter sends and Shift+Enter adds a line, in the composer only. These bindings sit
     // at the input's own depth and come later, so they win over its Enter.
     cx.bind_keys([
@@ -807,6 +854,7 @@ export default class Slack extends View {
         r.state.set_value("");
         r.empty = true;
         this.markSeen(...(this.viewRow?.items ?? []).map((i) => i.id));
+        this.markInSlack(replyMark(r.target, res.message?.ts), cx);
         if (this.views.at(-1) === v) this.showPosted(v, res.message, cx);
       } else {
         r.error = replyError(res.error);
@@ -877,6 +925,7 @@ export default class Slack extends View {
       try {
         await this.ensureToken();
         let raw,
+          gap = false,
           added = 0;
         if (v.mode === "history") {
           const r = await this.call("conversations.history", {
@@ -895,12 +944,15 @@ export default class Slack extends View {
             v.posted ?? [],
             await this.thread(v.ch, v.thread),
           );
-        else raw = await this.around(v.ch, v.anchor);
+        else ({ raw, gap } = await this.around(v.ch, v.anchor));
         await this.resolvePeople(userIds(raw), 30);
         await this.resolveChannels(channelRefs(raw));
         const grew = raw.length !== v.raw.length;
         this.show(v, raw);
         v.error = null;
+        // Opening marks it read in Slack, never past what the view shows. A reload does
+        // not: the panel can be hidden while its view reloads.
+        if (first) this.markInSlack(viewMark(v, raw, { gap }), cx);
         await this.viewImages();
         // Child 0 is "Load older" when there is more history.
         const lead = v.mode === "history" && v.cursor ? 1 : 0;
@@ -1051,7 +1103,8 @@ export default class Slack extends View {
     return mergeMessages([], all);
   }
 
-  // A message in context: the 15 messages up to it and the 10 after it.
+  // A message in context: the 15 messages up to it and the 10 after it. `gap`: more than
+  // 100 follow it, so the 10 shown are not the ones just after it.
   async around(ch, ts) {
     const before = await this.call("conversations.history", {
       channel: ch,
@@ -1064,7 +1117,10 @@ export default class Slack extends View {
       oldest: ts,
       limit: 100,
     });
-    return around(before.messages ?? [], after.messages ?? []);
+    return {
+      raw: around(before.messages ?? [], after.messages ?? []),
+      gap: Boolean(after.has_more),
+    };
   }
 
   // The conversation as text for an agent without Slack tools, fetched as the view
@@ -1074,7 +1130,7 @@ export default class Slack extends View {
       await this.ensureToken();
       const raw = item.thread
         ? await this.thread(item.ch, item.thread)
-        : await this.around(item.ch, item.ts);
+        : (await this.around(item.ch, item.ts)).raw;
       await this.resolvePeople(userIds(raw), 30);
       return contextText(raw, {
         names: this.names().names,
@@ -1223,6 +1279,46 @@ export default class Slack extends View {
       this.spaceDir.set_value(folder);
       this.saveSpace(cx);
     });
+  }
+
+  // ADR 0015: a mark waits MARK_WAIT, so the open and a quick reply make one call. Then
+  // Slack's current last_read, and conversations.mark only past it. A failure logs its
+  // code and changes nothing; missing_scope stops marks until the token changes.
+  markInSlack(mark, cx) {
+    if (!queueMark(this.marks, mark, shared("slack.markRead"))) return;
+    cx.timer.after(MARK_WAIT, (cx) =>
+      cx.spawn(async (cx) => {
+        const r = await flushMark(this.marks, mark.ch, {
+          call: async (method, params, post) => {
+            await this.ensureToken();
+            return this.call(method, params, post);
+          },
+          on: shared("slack.markRead"),
+        });
+        if (r.error) console.log(`slack: conversations.mark ${r.error}`);
+        // Slack's read mark now, set here or already there: the button copy takes it.
+        if (r.ts)
+          setShared(
+            "slack.marked",
+            [
+              ...(shared("slack.marked") ?? []),
+              { key: r.ch, ts: r.ts, at: Date.now() },
+            ].slice(-MARKED_MAX),
+          );
+        if (this.marks.blocked) cx.notify();
+      }),
+    );
+  }
+
+  // On again after missing_scope: read the Keychain again, for a token with the scopes.
+  toggleMarkRead(cx) {
+    const on = !markOn(shared("slack.markRead"));
+    setShared("slack.markRead", on);
+    if (on && this.marks.blocked) {
+      this.marks.blocked = false;
+      this.token = null;
+    }
+    cx.notify();
   }
 
   // Hides a row's items here and in the badge, and marks them seen. Slack is not changed.
@@ -1691,6 +1787,7 @@ export default class Slack extends View {
                   "Include: channels only; it never hides a DM. Exclude: a channel by name, a DM by the person's or bot's name, a group DM by its names (*notetaker*). Comma-separated; * is any run, ? one character. Exclude wins. Enter saves.",
                 ),
             )
+            .child(this.markBox(t))
             .child(this.agentBox(t, field))
             .when(dismissed.size > 0, (el) =>
               el.child(
@@ -1831,6 +1928,61 @@ export default class Slack extends View {
               ),
           )
           .child(Scrollbar.vertical("slack-list").absolute().inset_0()),
+      );
+  }
+
+  // ADR 0015: the "Mark read in Slack" switch. Without the write scopes, one line says so.
+  markBox(t) {
+    const on = markOn(shared("slack.markRead"));
+    return v_flex()
+      .gap(6)
+      .pt(4)
+      .border_t(1)
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .id("slack-mark-read")
+          .mt(6)
+          .h(24)
+          .px(8)
+          .gap(6)
+          .self_start()
+          .items_center()
+          .rounded(6)
+          .border_1()
+          .border_color(on ? t.accent : t.border)
+          .bg(on ? t.selected : t.background)
+          .text_size(11.5)
+          .text_color(on ? t.foreground : t.muted)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.toggleMarkRead(cx))
+          .child(
+            div()
+              .size(7)
+              .rounded_full()
+              .when(on, (el) => el.bg(t.accent))
+              .when(!on, (el) => el.border_1().border_color(t.dim)),
+          )
+          .child("Mark read in Slack"),
+      )
+      .when(on && this.marks.blocked, (el) =>
+        el.child(
+          div()
+            .text_size(11)
+            .text_color(t.blocked)
+            .child("Needs write permission to mark read in Slack"),
+        ),
+      )
+      .child(
+        div()
+          .text_size(11)
+          .text_color(t.dim)
+          .child(
+            on
+              ? "Opening a DM or a mention marks it read in Slack, up to what the view shows. A reply in a DM marks it read up to the reply."
+              : "Off: Slack's read state does not change here.",
+          ),
       );
   }
 

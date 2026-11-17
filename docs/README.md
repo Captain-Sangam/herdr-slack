@@ -35,6 +35,7 @@ This folder holds the documentation of herdr-slack. Start with the architecture 
 | [0012](adr/0012-agent-and-model-settings.md)           | Agent and model settings for Send to agent.                   | Accepted, replaces `ARGV`       |
 | [0013](adr/0013-thread-read-marks.md)                  | Read marks for threads, fetched least recently checked first. | Accepted, replaces part of 0006 |
 | [0014](adr/0014-send-to-space-setting.md)              | A setting for the space that Send to agent uses.              | Accepted, replaces `space`      |
+| [0015](adr/0015-read-state-both-ways.md)               | Read state flows both ways, with `conversations.mark`.        | Accepted, replaces part of 0006 |
 
 To add a decision:
 
