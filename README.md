@@ -1,12 +1,12 @@
-<p align="center"><img src="docs/assets/logo.svg" width="96" height="96" alt="herdr-slack logo"></p>
+<p align="center"><img src="docs/assets/logo.svg" width="96" height="96" alt="Slack for Herdr logo"></p>
 
-# herdr-slack
+# Slack for Herdr
 
 <p align="center"><img src="preview.png" alt="The main-slack window: a Slack thread with a reply draft in the panel, a Claude Code agent that reads the thread, a Codex test run, and the usage meter"></p>
 
-herdr-slack adds two mods to Herdr.app on macOS. One is a usage meter for Claude and Codex. The other is a Slack panel for your DMs and mentions, where you can read a conversation and reply. One click sends a Slack message to a Claude Code agent.
+Slack for Herdr (repo `herdr-slack`) adds two mods to Herdr.app on macOS. One is a usage meter for Claude and Codex. The other is a Slack panel for your DMs and mentions, where you can read a conversation and reply. One click sends a Slack message to a Claude Code agent.
 
-herdr-slack is an independent project. It is not made by, or affiliated with, the makers of Herdr or Slack.
+Slack for Herdr is an independent project. It is not made by, or affiliated with, the makers of Herdr or Slack.
 
 ## Screens
 
